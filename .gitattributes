@@ -1,0 +1,2 @@
+# Container entrypoints and s6 control files must use LF on every host OS.
+docker/**/*.sh text eol=lf

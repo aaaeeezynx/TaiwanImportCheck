@@ -14,9 +14,9 @@
 - 目前有 14 個來源具備 active version；`5996`、`92103`、`7078`、`8876`
   沒有可啟用版本。`9714` 已有 active PASS 版本，但 registry 的
   `last_status` 尚未寫回，仍是舊的 FAIL。
-- Docker Client 29.6.1 與 Compose v5.2.0 可用；2026-10-23 本輪 Docker daemon
-  未連線，因此本輪不能宣稱已重跑容器建置或容器內 smoke test。2026-10-21
-  曾有成功的歷史 smoke test 紀錄。
+- Docker Client/Server 29.6.1 與 Compose v5.2.0 可用。2026-10-23 本輪已
+  實際重建並啟動 `tic-p0-hermes`，s6 初始化與 gateway 均正常；容器內 smoke
+  test 通過 plugin、SQLite、文字／圖片／URL 輸入與 allowlist 驗證。
 - Telegram live E2E 尚未完成，因為目前沒有本次可使用的測試 Bot 憑證。
 - 本次完成 Git 初始化、提交與推送後，專案會同步到
   `https://github.com/aaaeeezynx/TaiwanImportCheck.git`；資料庫、快照、報告、
@@ -231,8 +231,9 @@ Bot Token、模型 API key、真實 Telegram User ID 或資料庫提交到 Git�
 
 - Telegram live E2E、圖片事件到 `image_path` 的實際傳遞、真實 gateway
   重啟與 health 行為尚未驗證。
-- 本輪 Docker daemon 未連線，不能把本輪容器測試標示為完成；需重新啟動
-  Docker Desktop 後，依 P0 文件重跑 `docker compose build`、`up` 與 smoke。
+- 本輪已通過 Docker 建置、容器啟動、gateway 與容器內 smoke test；但 `.env`
+  仍是範例 Bot Token，Telegram 平台連線被拒絕，因此不能把 Telegram live E2E
+  標示為完成。
 - 18 個來源仍有 2 個 REVIEW、2 個 FAIL；`9714` registry 狀態需修正寫回。
 - 正式資料庫尚未接入 Hermes，這是刻意的隔離，不是漏接。
 - 下一步先處理 `92103`、`5996` 的可重現診斷與 `7078`、`8876` 的 TLS，

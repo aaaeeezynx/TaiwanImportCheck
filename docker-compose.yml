@@ -38,4 +38,7 @@ services:
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
+    # Windows bind contexts can preserve CRLF in Hermes' shell scripts.
+    # Normalize only the running container before s6-overlay starts.
+    entrypoint: ["/bin/sh", "/workspace/app/docker/normalize-s6-crlf.sh"]
     command: ["gateway", "run"]
