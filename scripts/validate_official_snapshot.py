@@ -155,7 +155,11 @@ def _expected_match_count(header: list[str], expected: list[str]) -> int:
 
 
 def _parse_csv(
-    raw: bytes, expected: list[str], keys: list[str], ccc_fields: list[str]
+    raw: bytes,
+    expected: list[str],
+    keys: list[str],
+    ccc_fields: list[str],
+    source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     text = _decode_text(raw)
     choices = []
@@ -171,7 +175,7 @@ def _parse_csv(
         for row in reader
         if row and any(cell.strip() for cell in row)
     )
-    return _summarize_rows(header, rows, expected, keys, ccc_fields)
+    return _summarize_rows(header, rows, expected, keys, ccc_fields, source)
 
 
 def _find_json_records(value: Any) -> list[dict[str, Any]] | None:
@@ -192,14 +196,18 @@ def _find_json_records(value: Any) -> list[dict[str, Any]] | None:
 
 
 def _parse_json(
-    raw: bytes, expected: list[str], keys: list[str], ccc_fields: list[str]
+    raw: bytes,
+    expected: list[str],
+    keys: list[str],
+    ccc_fields: list[str],
+    source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     value = json.loads(_decode_text(raw))
     records = _find_json_records(value)
     if records is None:
         raise ValueError("JSON contains no list of record objects")
     header = list(records[0].keys())
-    return _summarize_rows(header, records, expected, keys, ccc_fields)
+    return _summarize_rows(header, records, expected, keys, ccc_fields, source)
 
 
 def _local_name(tag: str) -> str:
@@ -207,7 +215,11 @@ def _local_name(tag: str) -> str:
 
 
 def _parse_xml(
-    raw: bytes, expected: list[str], keys: list[str], ccc_fields: list[str]
+    raw: bytes,
+    expected: list[str],
+    keys: list[str],
+    ccc_fields: list[str],
+    source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     root = ElementTree.fromstring(raw)
     groups: list[tuple[int, ElementTree.Element]] = []
@@ -242,19 +254,75 @@ def _parse_xml(
             for record in list(parent)
             if record.tag == sample.tag
         ]
-        return _summarize_rows(header, records, expected, keys, ccc_fields)
+        return _summarize_rows(header, records, expected, keys, ccc_fields, source)
 
     children = list(root)
     header = [_local_name(child.tag) for child in children]
     if not header:
         raise ValueError("XML contains no record fields")
     row = {_local_name(child.tag): (child.text or "").strip() for child in children}
-    return _summarize_rows(header, [row], expected, keys, ccc_fields)
+    return _summarize_rows(header, [row], expected, keys, ccc_fields, source)
+
+
+def _is_parseable_source_date(value: Any) -> bool:
+    """Accept the date forms used by the official datasets without guessing values."""
+    text = str(value or "").strip()
+    if not text:
+        return False
+    candidates = [text]
+    if "T" in text:
+        candidates.append(text.split("T", 1)[0])
+    for candidate in candidates:
+        try:
+            datetime.fromisoformat(candidate)
+            return True
+        except ValueError:
+            pass
+    for date_format in ("%Y%m%d", "%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d"):
+        try:
+            datetime.strptime(text, date_format)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _law_identity_issues(
+    row: dict[str, Any],
+    field_by_norm: dict[str, str],
+) -> list[str]:
+    """Return row-level law identity violations without filling missing values."""
+    issues: list[str] = []
+    name = str(row.get(field_by_norm.get(_norm("法規名稱"), ""), "") or "").strip()
+    url = str(row.get(field_by_norm.get(_norm("法規網址"), ""), "") or "").strip()
+    modified = str(
+        row.get(field_by_norm.get(_norm("最新異動日期"), ""), "") or ""
+    ).strip()
+    effective = str(
+        row.get(field_by_norm.get(_norm("生效日期"), ""), "") or ""
+    ).strip()
+
+    if not name:
+        issues.append("blank_law_name")
+    if not url:
+        issues.append("blank_law_url")
+    else:
+        try:
+            _check_gov_url(url)
+        except ValueError:
+            issues.append("invalid_law_url")
+    if not modified:
+        issues.append("blank_latest_modified_date")
+    elif not _is_parseable_source_date(modified):
+        issues.append("invalid_latest_modified_date")
+    if effective and not _is_parseable_source_date(effective):
+        issues.append("invalid_effective_date")
+    return issues
 
 
 def _summarize_rows(
     header: list[str], rows, expected: list[str], keys: list[str],
-    ccc_fields: list[str],
+    ccc_fields: list[str], source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     field_by_norm = {_norm(field): field for field in header}
     key_columns = [field_by_norm[_norm(field)] for field in keys if _norm(field) in field_by_norm]
@@ -265,6 +333,13 @@ def _summarize_rows(
     duplicate_rows = 0
     blank_key_rows = 0
     invalid_ccc_values = 0
+    law_identity_invalid_rows = 0
+    law_identity_issue_counts: dict[str, int] = {}
+    check_law_identity = bool(
+        source
+        and "law_identity_requires_url_and_dates"
+        in source.get("validation_rules", [])
+    )
     count = 0
     for row in rows:
         count += 1
@@ -286,6 +361,14 @@ def _summarize_rows(
             normalized = re.sub(r"[.\-\s]", "", value)
             if value and not re.fullmatch(r"\d{8,12}[A-Z]?", normalized.upper()):
                 invalid_ccc_values += 1
+        if check_law_identity:
+            identity_issues = _law_identity_issues(row, field_by_norm)
+            if identity_issues:
+                law_identity_invalid_rows += 1
+                for issue in identity_issues:
+                    law_identity_issue_counts[issue] = (
+                        law_identity_issue_counts.get(issue, 0) + 1
+                    )
     return {
         "header": header,
         "row_count": count,
@@ -293,11 +376,17 @@ def _summarize_rows(
         "duplicate_rows": duplicate_rows,
         "blank_key_rows": blank_key_rows,
         "invalid_ccc_values": invalid_ccc_values,
+        "law_identity_invalid_rows": law_identity_invalid_rows,
+        "law_identity_issue_counts": law_identity_issue_counts,
     }
 
 
 def _parse_zip(
-    raw: bytes, expected: list[str], keys: list[str], ccc_fields: list[str]
+    raw: bytes,
+    expected: list[str],
+    keys: list[str],
+    ccc_fields: list[str],
+    source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         infos = [info for info in archive.infolist() if not info.is_dir()]
@@ -315,11 +404,11 @@ def _parse_zip(
             suffix = Path(info.filename).suffix.lower()
             try:
                 if suffix == ".json":
-                    parsed = _parse_json(inner, expected, keys, ccc_fields)
+                    parsed = _parse_json(inner, expected, keys, ccc_fields, source)
                 elif suffix == ".csv":
-                    parsed = _parse_csv(inner, expected, keys, ccc_fields)
+                    parsed = _parse_csv(inner, expected, keys, ccc_fields, source)
                 else:
-                    parsed = _parse_xml(inner, expected, keys, ccc_fields)
+                    parsed = _parse_xml(inner, expected, keys, ccc_fields, source)
             except (UnicodeDecodeError, ValueError, json.JSONDecodeError, ElementTree.ParseError):
                 continue
             overlap = _expected_match_count(parsed["header"], expected)
@@ -344,16 +433,16 @@ def validate_payload(raw: bytes, source: dict[str, Any]) -> dict[str, Any]:
     ccc_fields = source.get("ccc_fields", [])
     probe = raw.lstrip(b"\xef\xbb\xbf\t\r\n ")
     if raw.startswith(b"PK\x03\x04"):
-        parsed = _parse_zip(raw, expected, keys, ccc_fields)
+        parsed = _parse_zip(raw, expected, keys, ccc_fields, source)
         parse_format = "ZIP"
     elif probe.startswith(b"{") or probe.startswith(b"["):
-        parsed = _parse_json(raw, expected, keys, ccc_fields)
+        parsed = _parse_json(raw, expected, keys, ccc_fields, source)
         parse_format = "JSON"
     elif probe.startswith(b"<"):
-        parsed = _parse_xml(raw, expected, keys, ccc_fields)
+        parsed = _parse_xml(raw, expected, keys, ccc_fields, source)
         parse_format = "XML"
     else:
-        parsed = _parse_csv(raw, expected, keys, ccc_fields)
+        parsed = _parse_csv(raw, expected, keys, ccc_fields, source)
         parse_format = "CSV"
 
     actual = {_norm(field) for field in parsed["header"]}
@@ -369,6 +458,8 @@ def validate_payload(raw: bytes, source: dict[str, Any]) -> dict[str, Any]:
         quality_flags.append("blank_key_rows")
     if parsed["invalid_ccc_values"]:
         quality_flags.append("invalid_ccc_values")
+    if parsed["law_identity_invalid_rows"]:
+        quality_flags.append("invalid_law_identity")
     parsed.update({
         "parse_format": parse_format,
         "keys_unique": keys_unique,

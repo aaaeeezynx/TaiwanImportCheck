@@ -15,7 +15,9 @@ from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TOOL_PATH = PROJECT_ROOT / "tools" / "p0_import_lookup.py"
-TEST_TEMP_ROOT = PROJECT_ROOT / ".tmp" / "tests"
+TEST_TEMP_ROOT = Path(
+    os.environ.get("P0_TEST_TEMP_ROOT", PROJECT_ROOT / ".tmp" / "tests")
+)
 TEST_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 HERMES_ROOT = Path(
     os.environ.get("HERMES_INSTALL_ROOT", Path(sys.executable).resolve().parents[2])

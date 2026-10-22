@@ -16,7 +16,6 @@ from scripts.validate_official_snapshot import (
     DEFAULT_CANDIDATE_DIR,
     DEFAULT_REPORT_DIR,
     DEFAULT_SOURCE_DIR,
-    _filename,
     run,
 )
 from tools.official_database import (
@@ -29,28 +28,53 @@ from tools.official_database import (
 )
 
 
-def run_update(download: bool, db_path: Path = DEFAULT_DB_PATH) -> dict:
-    initialize_database(db_path)
+def _validated_snapshot_path(result: dict, source_dir: Path) -> Path:
+    """Resolve the validator's selected file without trusting its extension."""
+    raw_path = result.get("file")
+    if not raw_path:
+        raise ValueError("PASS result does not identify a validated snapshot file")
+    try:
+        snapshot = Path(raw_path).resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("validated snapshot file is unavailable") from exc
+    root = Path(source_dir).resolve()
+    if snapshot != root and root not in snapshot.parents:
+        raise ValueError("validated snapshot file is outside the source snapshot directory")
+    if not snapshot.is_file():
+        raise ValueError("validated snapshot path is not a regular file")
+    return snapshot
+
+
+def run_update(
+    download: bool,
+    db_path: Path = DEFAULT_DB_PATH,
+    *,
+    source_dir: Path = DEFAULT_SOURCE_DIR,
+    candidate_dir: Path = DEFAULT_CANDIDATE_DIR,
+    report_dir: Path = DEFAULT_REPORT_DIR,
+) -> dict:
+    sources_list = load_sources()
+    initialize_database(db_path, sources_list)
     report = run(
         download=download,
-        source_dir=DEFAULT_SOURCE_DIR,
-        candidate_dir=DEFAULT_CANDIDATE_DIR,
-        report_dir=DEFAULT_REPORT_DIR,
+        source_dir=source_dir,
+        candidate_dir=candidate_dir,
+        report_dir=report_dir,
     )
-    sources = {str(source["id"]): source for source in load_sources()}
+    sources = {str(source["id"]): source for source in sources_list}
     updates = []
     import_errors = 0
     for result in report["results"]:
         dataset_id = str(result.get("id", ""))
         status = result.get("status", "FAIL")
         try:
-            record_validation_result(db_path, dataset_id, status, result.get("error"))
-            if status != "PASS" or dataset_id not in sources:
+            if status != "PASS":
+                record_validation_result(db_path, dataset_id, status, result.get("error"))
                 updates.append({"id": dataset_id, "status": status, "database_action": "kept_previous"})
                 continue
-            snapshot = DEFAULT_SOURCE_DIR / _filename(
-                dataset_id, sources[dataset_id]["format"]
-            )
+            if dataset_id not in sources:
+                raise ValueError(f"PASS result has unknown dataset id {dataset_id}")
+            snapshot = _validated_snapshot_path(result, source_dir)
             imported = import_validated_snapshot(
                 db_path,
                 sources[dataset_id],
@@ -60,7 +84,12 @@ def run_update(download: bool, db_path: Path = DEFAULT_DB_PATH) -> dict:
                 metadata_modified=result.get("metadata_modified"),
                 update_frequency=result.get("update_frequency"),
             )
-            updates.append({"id": dataset_id, "status": "PASS", "database_action": "activated", **imported})
+            updates.append({
+                "id": dataset_id,
+                "status": "PASS",
+                "database_action": "activated" if imported["activated"] else "kept_previous",
+                **imported,
+            })
         except Exception as exc:
             import_errors += 1
             error = f"{type(exc).__name__}: {exc}"
@@ -90,8 +119,8 @@ def run_update(download: bool, db_path: Path = DEFAULT_DB_PATH) -> dict:
         "summary": summary,
         "datasets": updates,
     }
-    DEFAULT_REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    (DEFAULT_REPORT_DIR / "official_data_update.json").write_text(
+    report_dir.mkdir(parents=True, exist_ok=True)
+    (report_dir / "official_data_update.json").write_text(
         json.dumps(update_report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return update_report

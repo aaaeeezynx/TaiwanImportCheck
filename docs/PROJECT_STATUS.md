@@ -8,19 +8,24 @@
 ## 1. 目前結論
 
 - P0 的程式碼、權限控制、Mock SQLite 查詢與 Hermes plugin 整合已有自動測試；
-  2026-10-23 實跑 36 項測試全部通過，Python 語法檢查通過。
+  2026-10-23 實跑 53 項測試全部通過，Python 語法檢查通過。
 - 官方參考資料庫已建立 18 個來源的 schema 與版本管理，但這不等於資料已可
-  正式使用。最新隔離核驗結果是 14 PASS、2 REVIEW、2 FAIL、0 MISSING。
+  正式使用。最新本機核驗結果是 14 PASS、0 REVIEW、0 FAIL、4 MISSING，
+  0 import errors。
 - 目前有 14 個來源具備 active version；`5996`、`92103`、`7078`、`8876`
-  沒有可啟用版本。`9714` 已有 active PASS 版本，但 registry 的
-  `last_status` 尚未寫回，仍是舊的 FAIL。
+  沒有可啟用版本。`9714` 的最新核驗、registry 與 active version 均為 PASS。
 - Docker Client/Server 29.6.1 與 Compose v5.2.0 可用。2026-10-23 本輪已
   實際重建並啟動 `tic-p0-hermes`，s6 初始化與 gateway 均正常；容器內 smoke
   test 通過 plugin、SQLite、文字／圖片／URL 輸入與 allowlist 驗證。
-- Telegram live E2E 尚未完成，因為目前沒有本次可使用的測試 Bot 憑證。
-- 本次完成 Git 初始化、提交與推送後，專案會同步到
-  `https://github.com/aaaeeezynx/TaiwanImportCheck.git`；資料庫、快照、報告、
-  Hermes home 與 `.env` 不納入版本控制。
+- Telegram Bot 憑證已配置且 `getMe` 實測成功；歷史 gateway 日誌曾記錄
+  `Connected to Telegram (polling mode)`、`telegram connected` 與 1 個平台
+  已上線，但最新行程仍在連線嘗試，尚未確認本輪連線，且尚無 allowlist 帳號
+  的真實訊息事件處理證據，因此 Telegram live E2E 尚未完成。
+- Hermes 的 `OPENAI_API_KEY` 目前仍是 placeholder；即使 Telegram 事件成功
+  送達，Hermes 也無法可靠產生最終模型回覆。這是 live E2E 的另一個明確阻塞。
+- 專案已初始化 Git 並設定
+  `https://github.com/aaaeeezynx/TaiwanImportCheck.git` 為 origin；資料庫、快照、
+  報告、Hermes home 與 `.env` 不納入版本控制。
 
 ## 2. P0 驗證鏈與邊界
 
@@ -60,18 +65,19 @@ P0 不包含案件管理、網站、多 Agent、正式申報、正式法規判�
 
 ## 4. 官方來源與最新核驗狀態
 
-最新隔離核驗報告位於本機暫存目錄
-`.tmp/live-validation-20261022/official_source_validation.json`；穩定報告
-`data/official_data/reports/official_source_validation.json` 仍是較舊的
-13 PASS、2 REVIEW、3 FAIL 結果。兩者不可混用。
+最新本機核驗報告位於
+`data/official_data/reports/official_source_validation.json`，結果為
+14 PASS、0 REVIEW、0 FAIL、4 MISSING；更新報告
+`data/official_data/reports/official_data_update.json` 顯示 14 個 active version、
+0 個新版本與 0 個匯入錯誤。
 
 | Dataset | SQLite 資料表 | 最新狀態 | Active version |
 |---|---|---:|---:|
 | 80871 | `tariff_rates` | PASS | 有 |
-| 92103 | `commodity_rules` | REVIEW | 無 |
+| 92103 | `commodity_rules` | MISSING | 無 |
 | 16519 | `import_requirement_codes` | PASS | 有 |
 | 30171 | `requirement_authorities` | PASS | 有 |
-| 5996 | `telecom_certified_devices` | REVIEW | 無 |
+| 5996 | `telecom_certified_devices` | MISSING | 無 |
 | 171493 | `telecom_radio_equipment` | PASS | 有 |
 | 9639 | `food_regulations` | PASS | 有 |
 | 9047 | `registered_food_products` | PASS | 有 |
@@ -79,23 +85,23 @@ P0 不包含案件管理、網站、多 Agent、正式申報、正式法規判�
 | 9116 | `drug_ccc_mappings` | PASS | 有 |
 | 9122 | `drug_licenses` | PASS | 有 |
 | 9576 | `medical_device_licenses` | PASS | 有 |
-| 7078 | `bsmi_required_inspections` | FAIL | 無 |
+| 7078 | `bsmi_required_inspections` | MISSING | 無 |
 | 9714 | `bsmi_surveillance_items` | PASS | 有 |
-| 8876 | `bsmi_batch_inspection_items` | FAIL | 無 |
+| 8876 | `bsmi_batch_inspection_items` | MISSING | 無 |
 | 9640 | `food_additive_standards` | PASS | 有 |
 | 6713 | `tariff_advance_rulings` | PASS | 有 |
 | 18289 | `taiwan_laws` | PASS | 有 |
 
-`9714` 的特殊情況：最新隔離核驗與對應版本表都是 PASS，且 active version
-存在；但 registry 的 `last_status` 仍是舊的 FAIL。這是狀態尚未寫回，不可
-描述成 active 資料失效，也不能直接把舊錯誤清除後宣稱所有來源都正常。
+`9714` 的最新核驗、`official_dataset_registry.last_status` 與 active version
+均為 PASS，先前舊 FAIL 狀態已修正寫回；這仍不表示其資料內容已具備正式法律效力。
 
 ## 5. 四個主要缺口與補足方式
 
 ### 5.1 `92103` 貨品及規定生效資料重複
 
-目前下載 12,703 筆，但 12,702 筆被判為重複 key，且 12,702 筆是完全重複列；
-官方 metadata 又標示 12,699 筆。這個結果不可直接去重後當成官方資料。
+目前沒有可用的正式或候選快照；先前候選檔曾出現 12,703 筆、12,702 筆重複 key
+與 12,702 筆完全重複列，官方 metadata 又標示 12,699 筆。這個結果不可直接
+去重後當成官方資料。
 
 處理步驟：
 
@@ -109,9 +115,9 @@ P0 不包含案件管理、網站、多 Agent、正式申報、正式法規判�
 
 ### 5.2 `5996` NCC 電信設備清單重複
 
-目前 111,331 筆，有 516 組重複比對 key，另有 8 筆完全重複列。`設備種類 +
-西元年度後二位 + 審定證明編號` 在 manifest 中已標示可一對多，因此不能只看
-key 重複就刪除。
+目前沒有可用的正式或候選快照；先前候選檔曾出現 111,331 筆、516 組重複比對
+key 與 8 筆完全重複列。`設備種類 + 西元年度後二位 + 審定證明編號` 在 manifest
+中已標示可一對多，因此不能只看 key 重複就刪除。
 
 處理步驟：
 
@@ -122,10 +128,11 @@ key 重複就刪除。
 4. 確認一對多合法後，更新唯一性規則並重跑核驗；未確認前維持 REVIEW 且不
    啟用。
 
-### 5.3 `7078`、`8876` BSMI TLS 憑證失敗
+### 5.3 `7078`、`8876` BSMI 快照缺失
 
-這兩個來源目前是 Windows curl `SEC_E_UNTRUSTED_ROOT`。不得使用 `-k`、關閉
-憑證驗證、忽略憑證鏈或把 HTTP 降級當成解法。
+這兩個來源目前沒有可用的正式或候選快照。先前下載曾遇到 Windows curl
+`SEC_E_UNTRUSTED_ROOT`。不得使用 `-k`、關閉憑證驗證、忽略憑證鏈或把 HTTP
+降級當成解法。
 
 處理步驟：
 
@@ -155,9 +162,8 @@ key 重複就刪除。
 ## 6. 更新頻率與自動核驗
 
 目前 Windows 排程名稱為 `TaiwanImportCheck Official Data Weekly Update`，
-每週日 03:00（本機時區）檢查 18 個來源。2026-10-22 上次執行結果為
-`LastTaskResult = 1`，原因是存在 REVIEW/FAIL，不是任務完全沒有執行；下次
-執行時間是 2026-10-25 03:00。
+每週日 03:00（本機時區）檢查 18 個來源。最新本機更新有 4 個 MISSING，因此
+程序回傳非零結果；任務有執行，但不能把所有來源描述成更新成功。
 
 低維護成本建議：
 
@@ -171,8 +177,9 @@ key 重複就刪除。
 - 下一階段增加版本差異報告、CCC/規定/機關跨表關聯檢查、生效與失效日期檢查、
   人工覆核閘門與失敗通知。
 
-目前自動核驗只涵蓋格式、欄位、重複欄名、非零筆數、空 key、唯一 key、完全
-重複列與 CCC 格式；尚未證明法規內容正確、資料集完整、條文現行有效或商品
+目前自動核驗涵蓋格式、欄位、重複欄名、非零筆數、空 key、唯一 key、完全
+重複列、CCC 格式，以及法規名稱、官方 HTTPS `.gov.tw` 網址、最新異動日期與
+可解析的生效日期；尚未證明法規內容正確、資料集完整、條文現行有效或商品
 適用性。
 
 ## 7. 欄位放置位置
@@ -227,14 +234,31 @@ Windows 本機 Hermes 與 Docker 的完整啟動步驟、allowlist 設定與 Tel
 測試內容，請見 [`../P0_驗證說明.md`](../P0_驗證說明.md)。不要把 `.env`、
 Bot Token、模型 API key、真實 Telegram User ID 或資料庫提交到 Git。
 
+容器內可執行的 unittest（必須帶入 `PYTHONPATH`）：
+
+```powershell
+docker exec -e PYTHONPATH=/opt/hermes -e P0_TEST_TEMP_ROOT=/tmp/tic-p0-tests tic-p0-hermes /opt/hermes/.venv/bin/python -m unittest discover -s tests -v
+```
+
 ## 9. 目前限制與下一步
 
-- Telegram live E2E、圖片事件到 `image_path` 的實際傳遞、真實 gateway
-  重啟與 health 行為尚未驗證。
-- 本輪已通過 Docker 建置、容器啟動、gateway 與容器內 smoke test；但 `.env`
-  仍是範例 Bot Token，Telegram 平台連線被拒絕，因此不能把 Telegram live E2E
-  標示為完成。
-- 18 個來源仍有 2 個 REVIEW、2 個 FAIL；`9714` registry 狀態需修正寫回。
+- Telegram 真實訊息 live E2E、圖片事件到 `image_path` 的實際傳遞，以及
+  Docker 重啟後的自動恢復行為尚未驗證。
+- 本輪已通過 Docker 建置、容器啟動、gateway 與容器內 smoke test；Bot Token
+  也通過 `getMe` 驗證。歷史日誌曾顯示 Telegram polling 連線，但最新行程尚未
+  確認本輪連線；且尚無 allowlist 帳號的真實訊息事件，模型 API key 仍是
+  placeholder，因此不能把 Telegram live E2E 或完整回覆鏈路標示為完成。
+  Compose 未定義 Docker healthcheck，`health=n/a` 不代表健康檢查通過。
+- 18 個來源仍有 4 個 MISSING；它們沒有可啟用的 active version。
 - 正式資料庫尚未接入 Hermes，這是刻意的隔離，不是漏接。
 - 下一步先處理 `92103`、`5996` 的可重現診斷與 `7078`、`8876` 的 TLS，
   再補來源目錄、版本差異與人工覆核；完成後才評估讓正式資料庫進入查詢鏈。
+- 目前 live 阻塞的最小處理順序：
+  1. 先確認最新 gateway 行程已進入 Telegram polling；再由 allowlist 與非
+     allowlist 帳號送出真實私聊訊息，確認事件送達與拒絕行為。
+  2. 將 placeholder 的 `OPENAI_API_KEY` 換成有效測試憑證，並確認所選模型
+     可用。
+  3. 由 allowlist 帳號完成文字、圖片、URL 三種 Telegram 實測，再檢查
+     `image_path` 是否由圖片事件傳入。
+  4. 補上 Docker healthcheck，驗證容器重啟後 gateway 能自動恢復。
+  5. 最後才進行 `92103`、`5996` 的資料診斷與 `7078`、`8876` 的 TLS 修正。

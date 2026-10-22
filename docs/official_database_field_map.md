@@ -3,7 +3,32 @@
 Generated from `config/official_sources.json`. Source fields are stored as SQLite `TEXT` columns with the same names.
 Each dataset table also has `record_id` (`INTEGER PRIMARY KEY`), `source_version_id` (`TEXT`), and `source_row_number` (`INTEGER`).
 
-The active view is named `active_<table>`. Version and source metadata are in `official_dataset_versions`; current pointers and latest check statuses are in `official_dataset_registry`.
+The active view is named `active_<table>`. Version and source metadata are in `official_dataset_versions`; current pointers, manifest metadata, and latest check statuses are in `official_dataset_registry`.
+
+## Source metadata
+
+| Dataset ID | Authority | Official dataset | Format / content type | Declared update frequency | License | Effective dates | Validation rules |
+|---|---|---|---|---|---|---|---|
+| 80871 | 財政部關務署 | https://data.gov.tw/dataset/80871 | CSV / `text/csv` | 不定期 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、unique_match_keys、exact_duplicate_rows、valid_ccc_format |
+| 92103 | 經濟部國際貿易署 | https://data.gov.tw/dataset/92103 | JSON / `application/json` | 不定期 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、unique_match_keys、exact_duplicate_rows、valid_ccc_format |
+| 16519 | 經濟部國際貿易署 | https://data.gov.tw/dataset/16519 | CSV / `text/csv` | 不定期 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、unique_match_keys、exact_duplicate_rows |
+| 30171 | 經濟部國際貿易署 | https://data.gov.tw/dataset/30171 | CSV / `text/csv` | 不定期 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、unique_match_keys、exact_duplicate_rows |
+| 5996 | 國家通訊傳播委員會 | https://data.gov.tw/dataset/5996 | CSV / `text/csv` | 不定期 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、nonblank_match_keys、exact_duplicate_rows |
+| 171493 | 國家通訊傳播委員會 | https://data.gov.tw/dataset/171493 | CSV / `text/csv` | 不定期 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、unique_match_keys、exact_duplicate_rows |
+| 9639 | 衛生福利部食品藥物管理署 | https://data.gov.tw/dataset/9639 | CSV / `text/csv` | 每年 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、unique_match_keys、exact_duplicate_rows |
+| 9047 | 衛生福利部食品藥物管理署 | https://data.gov.tw/dataset/9047 | CSV / `text/csv` | 每 3 個月 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、unique_match_keys、exact_duplicate_rows |
+| 6133 | 衛生福利部食品藥物管理署 | https://data.gov.tw/dataset/6133 | CSV / `text/csv` | 每 7 日 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、nonblank_match_keys、exact_duplicate_rows、valid_ccc_format |
+| 9116 | 衛生福利部食品藥物管理署 | https://data.gov.tw/dataset/9116 | ZIP / `application/zip` | 不定期 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、unique_match_keys、exact_duplicate_rows、valid_ccc_format、zip_member_format |
+| 9122 | 衛生福利部食品藥物管理署 | https://data.gov.tw/dataset/9122 | ZIP / `application/zip` | 每 7 日 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、nonblank_match_keys、exact_duplicate_rows、zip_member_format |
+| 9576 | 衛生福利部食品藥物管理署 | https://data.gov.tw/dataset/9576 | ZIP / `application/zip` | 每 7 日 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、nonblank_match_keys、exact_duplicate_rows、zip_member_format |
+| 7078 | 經濟部標準檢驗局 | https://data.gov.tw/dataset/7078 | XML / `application/xml` | 每年 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、unique_match_keys、exact_duplicate_rows、valid_ccc_format |
+| 9714 | 經濟部標準檢驗局 | https://data.gov.tw/dataset/9714 | XML / `application/xml` | 不定期 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、unique_match_keys、exact_duplicate_rows、valid_ccc_format |
+| 8876 | 經濟部標準檢驗局 | https://data.gov.tw/dataset/8876 | XML / `application/xml` | 每月 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、unique_match_keys、exact_duplicate_rows、valid_ccc_format |
+| 9640 | 衛生福利部食品藥物管理署 | https://data.gov.tw/dataset/9640 | CSV / `text/csv` | 不定期 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、nonblank_match_keys、exact_duplicate_rows |
+| 6713 | 財政部關務署 | https://data.gov.tw/dataset/6713 | CSV / `text/csv` | 不定期 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、nonblank_match_keys、exact_duplicate_rows、valid_ccc_format |
+| 18289 | 法務部 | https://data.gov.tw/dataset/18289 | ZIP / `application/zip` | 每月 | [1 政府資料開放授權條款－第1版](https://data.gov.tw/license) | open - open | required_fields、nonempty_payload、duplicate_headers、nonblank_match_keys、exact_duplicate_rows、zip_member_format、law_identity_requires_url_and_dates |
+
+## Source fields
 
 | Dataset ID | Dataset | SQLite table | Source fields / same-named columns | Match fields | Match fields unique? |
 |---|---|---|---|---|---|
@@ -24,8 +49,10 @@ The active view is named `active_<table>`. Version and source metadata are in `o
 | 8876 | BSMI逐批檢驗品目 | `bsmi_batch_inspection_items` | ccccode、chiname、engname、localname、prodkindname、公告規定、examimp、檢驗期限、sampid、計量單位、列檢日期、取樣數量 | ccccode、列檢日期 | 是 |
 | 9640 | 食品添加物使用範圍及限量暨規格標準 | `food_additive_standards` | 類別、中文品名、英文品名、使用食品範圍及限量、使用限制、規格、類別說明 | 中文品名、英文品名 | 否；可對應多筆不同記錄 |
 | 6713 | 稅則預先審核案例 | `tariff_advance_rulings` | 稅則分類理由、稅則、稅則號別、統計號別、檢查碼、申報貨品名稱、材質成分、功能及用途、發文文號、發文日期、中文稅則名稱、英文稅則名稱、備註 | 發文文號 | 否；可對應多筆不同記錄 |
-| 18289 | 中文法規法律資料檔 | `taiwan_laws` | 法規性質、法規名稱、法規網址、法規類別、最新異動日期、生效日期、生效內容、廢止註記、是否英譯註記、英文法規名稱、附件、沿革內容、前言、法規內容 | 法規名稱 | 是 |
+| 18289 | 中文法規法律資料檔 | `taiwan_laws` | 法規性質、法規名稱、法規網址、法規類別、最新異動日期、生效日期、生效內容、廢止註記、是否英譯註記、英文法規名稱、附件、沿革內容、前言、法規內容 | 法規名稱 | 否；可對應多筆不同記錄 |
 
 All source-specific columns use `TEXT` to preserve the source's original value and formatting. Parse dates or rates in query code when needed; do not infer missing values.
 Match fields help locate or relate records. A repeated match-field value is informational when uniqueness is marked `no`; exact duplicate rows are checked separately.
 For dataset 18289, nested values declared in `nested_fields` are stored as XML text in their source column so article/chapter structure is retained.
+Registry metadata includes `authority`, `official_dataset_url`, `format`, `content_type`, `license_code`, `license_name`, `license_url`, `declared_update_frequency`, `effective_from`, `effective_to`, `validation_rules`, and `metadata_modified`.
+Version metadata preserves the same source provenance on each imported snapshot, along with `source_url`, `fetched_at`, `validated_at`, `record_count`, `sha256`, and `validation_status`.

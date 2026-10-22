@@ -4,6 +4,18 @@
     "name": "海關進口稅則",
     "table": "tariff_rates",
     "format": "CSV",
+    "authority": "財政部關務署",
+    "official_dataset_url": "https://data.gov.tw/dataset/80871",
+    "content_type": "text/csv",
+    "update_frequency": "不定期",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "unique_match_keys", "exact_duplicate_rows", "valid_ccc_format"],
     "fields": ["貨品分類號列", "中文貨名", "英文貨名", "第一欄稅率", "第二欄稅率", "第三欄稅率", "統計數量單位", "統計重量單位", "稽徵規定", "輸入規定", "輸出規定"],
     "keys": ["貨品分類號列"],
     "ccc_fields": ["貨品分類號列"]
@@ -13,6 +25,18 @@
     "name": "貨品及規定生效資料",
     "table": "commodity_rules",
     "format": "JSON",
+    "authority": "經濟部國際貿易署",
+    "official_dataset_url": "https://data.gov.tw/dataset/92103",
+    "content_type": "application/json",
+    "update_frequency": "不定期",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "unique_match_keys", "exact_duplicate_rows", "valid_ccc_format"],
     "fields": ["good_code", "good_pre_code", "good_c_name", "good_e_name", "effect_date", "ireg", "ereg"],
     "keys": ["good_code", "good_pre_code", "effect_date", "ireg"],
     "ccc_fields": ["good_code"]
@@ -22,6 +46,18 @@
     "name": "貨品輸入規定代號",
     "table": "import_requirement_codes",
     "format": "CSV",
+    "authority": "經濟部國際貿易署",
+    "official_dataset_url": "https://data.gov.tw/dataset/16519",
+    "content_type": "text/csv",
+    "update_frequency": "不定期",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "unique_match_keys", "exact_duplicate_rows"],
     "fields": ["輸入規定代號", "規定中文說明", "規定英文說明", "規定生效日", "資料筆數"],
     "keys": ["輸入規定代號"]
   },
@@ -30,6 +66,18 @@
     "name": "規定與主管機關",
     "table": "requirement_authorities",
     "format": "CSV",
+    "authority": "經濟部國際貿易署",
+    "official_dataset_url": "https://data.gov.tw/dataset/30171",
+    "content_type": "text/csv",
+    "update_frequency": "不定期",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "unique_match_keys", "exact_duplicate_rows"],
     "fields": ["序號", "主管機關", "輸入規定代號", "輸出規定代號", "單位物件識別碼OID"],
     "keys": ["序號"]
   },
@@ -39,6 +87,18 @@
     "table": "telecom_certified_devices",
     "keys_unique": false,
     "format": "CSV",
+    "authority": "國家通訊傳播委員會",
+    "official_dataset_url": "https://data.gov.tw/dataset/5996",
+    "content_type": "text/csv",
+    "update_frequency": "不定期",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "nonblank_match_keys", "exact_duplicate_rows"],
     "fields": ["設備種類", "西元年度後二位", "審定證明編號", "填報貿易e網的認證號碼", "設備名稱", "廠牌", "型號", "申請廠商", "製造廠商", "驗證機構", "SAR值", "拍照功能", "拍照時發出聲響功能", "充電器", "電池", "審驗日期", "換證日期", "出具檢驗報告之測試實驗室", "測試實驗室所屬國家", "驗證明是否仍屬有效", "廢止撤銷或註銷日期"],
     "keys": ["設備種類", "西元年度後二位", "審定證明編號"],
     "ccc_fields": []
@@ -48,6 +108,18 @@
     "name": "電信管制射頻器材逐步審驗合格清單",
     "table": "telecom_radio_equipment",
     "format": "CSV",
+    "authority": "國家通訊傳播委員會",
+    "official_dataset_url": "https://data.gov.tw/dataset/171493",
+    "content_type": "text/csv",
+    "update_frequency": "不定期",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "unique_match_keys", "exact_duplicate_rows"],
     "fields": ["設備種類", "西元年度後二位", "審定證明編號", "填報貿易e網的認證號碼", "設備名稱", "廠牌", "型號", "申請廠商", "製造廠商", "驗證機構", "SAR值", "拍照功能", "拍照時發出聲響功能", "充電器", "電池", "審驗日期", "換證日期", "出具檢驗報告之測試實驗室", "測試實驗室所屬國家", "驗證明是否仍屬有效", "廢止撤銷或註銷日期", "序號", "頻率", "最大功率"],
     "keys": ["填報貿易e網的認證號碼"]
   },
@@ -56,6 +128,18 @@
     "name": "食品法規條文資料集",
     "table": "food_regulations",
     "format": "CSV",
+    "authority": "衛生福利部食品藥物管理署",
+    "official_dataset_url": "https://data.gov.tw/dataset/9639",
+    "content_type": "text/csv",
+    "update_frequency": "每年",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "unique_match_keys", "exact_duplicate_rows"],
     "fields": ["類別", "法規性質", "法規名稱", "條文內容", "發佈日期", "附件下載"],
     "keys": ["法規名稱", "發佈日期"]
   },
@@ -64,6 +148,18 @@
     "name": "輸入錠狀膠囊狀食品查驗登記",
     "table": "registered_food_products",
     "format": "CSV",
+    "authority": "衛生福利部食品藥物管理署",
+    "official_dataset_url": "https://data.gov.tw/dataset/9047",
+    "content_type": "text/csv",
+    "update_frequency": "每 3 個月",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "unique_match_keys", "exact_duplicate_rows"],
     "fields": ["核備函字號", "中文品名", "英文品名", "有效日期", "發證日期", "申請商名稱", "申請商電話", "申請商地址", "成分", "簽審文件編號"],
     "keys": ["核備函字號"]
   },
@@ -73,6 +169,18 @@
     "table": "food_noncompliance",
     "keys_unique": false,
     "format": "CSV",
+    "authority": "衛生福利部食品藥物管理署",
+    "official_dataset_url": "https://data.gov.tw/dataset/6133",
+    "content_type": "text/csv",
+    "update_frequency": "每 7 日",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "nonblank_match_keys", "exact_duplicate_rows", "valid_ccc_format"],
     "fields": ["產地", "主旨", "原因", "進口商名稱", "進口商地址", "貨品分類號列", "檢驗方法", "不合格原因暨檢出量詳細說明", "法規限量標準", "製造廠或出口商名稱", "製造商代碼", "牌名", "重量", "處置情形", "發布日期", "報驗受理日期", "附圖"],
     "keys": ["主旨", "發布日期"],
     "ccc_fields": ["貨品分類號列"]
@@ -81,7 +189,19 @@
     "id": "9116",
     "name": "藥品CCC號列資料集",
     "table": "drug_ccc_mappings",
-    "format": "CSV",
+    "format": "ZIP",
+    "authority": "衛生福利部食品藥物管理署",
+    "official_dataset_url": "https://data.gov.tw/dataset/9116",
+    "content_type": "application/zip",
+    "update_frequency": "不定期",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "unique_match_keys", "exact_duplicate_rows", "valid_ccc_format", "zip_member_format"],
     "fields": ["許可證字號", "CCC號列一", "CCC號列一說明"],
     "keys": ["許可證字號", "CCC號列一"],
     "ccc_fields": ["CCC號列一"]
@@ -92,6 +212,18 @@
     "table": "drug_licenses",
     "keys_unique": false,
     "format": "ZIP",
+    "authority": "衛生福利部食品藥物管理署",
+    "official_dataset_url": "https://data.gov.tw/dataset/9122",
+    "content_type": "application/zip",
+    "update_frequency": "每 7 日",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "nonblank_match_keys", "exact_duplicate_rows", "zip_member_format"],
     "fields": ["許可證字號", "註銷狀態", "註銷日期", "註銷理由", "有效日期", "發證日期", "許可證種類", "舊證字號", "通關簽審文件編號", "中文品名", "英文品名", "適應症", "劑型", "包裝", "藥品類別", "管制藥品分類級別", "主成分略述", "申請商名稱", "申請商地址", "申請商統一編號", "製造商名稱", "製造廠廠址", "製造廠公司地址", "製造廠國別", "製程", "異動日期", "用法用量", "包裝與國際條碼"],
     "keys": ["許可證字號"]
   },
@@ -100,7 +232,19 @@
     "name": "醫療器材許可證資料集",
     "table": "medical_device_licenses",
     "keys_unique": false,
-    "format": "CSV",
+    "format": "ZIP",
+    "authority": "衛生福利部食品藥物管理署",
+    "official_dataset_url": "https://data.gov.tw/dataset/9576",
+    "content_type": "application/zip",
+    "update_frequency": "每 7 日",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "nonblank_match_keys", "exact_duplicate_rows", "zip_member_format"],
     "fields": ["許可證字號", "註銷狀態", "註銷日期", "註銷理由", "有效日期", "發證日期", "許可證種類", "舊證字號", "醫療器材級數", "通關簽審文件編號", "中文品名", "英文品名", "效能", "劑型", "包裝", "醫器主類別一", "醫器次類別一", "醫器主類別二", "醫器次類別二", "醫器主類別三", "醫器次類別三", "主成分略述", "醫器規格", "限制項目", "申請商名稱", "申請商地址", "申請商統一編號", "製造商名稱", "製造廠廠址", "製造廠公司地址", "製造廠國別", "製程", "異動日期", "製造許可登錄編號"],
     "keys": ["許可證字號"]
   },
@@ -109,6 +253,18 @@
     "name": "BSMI應施檢驗/查驗品目",
     "table": "bsmi_required_inspections",
     "format": "XML",
+    "authority": "經濟部標準檢驗局",
+    "official_dataset_url": "https://data.gov.tw/dataset/7078",
+    "content_type": "application/xml",
+    "update_frequency": "每年",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "unique_match_keys", "exact_duplicate_rows", "valid_ccc_format"],
     "fields": ["ccccode", "chiname", "engname", "localname", "chinote"],
     "keys": ["ccccode"],
     "ccc_fields": ["ccccode"]
@@ -118,6 +274,18 @@
     "name": "BSMI監視查驗品目",
     "table": "bsmi_surveillance_items",
     "format": "XML",
+    "authority": "經濟部標準檢驗局",
+    "official_dataset_url": "https://data.gov.tw/dataset/9714",
+    "content_type": "application/xml",
+    "update_frequency": "不定期",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "unique_match_keys", "exact_duplicate_rows", "valid_ccc_format"],
     "fields": ["ccccode", "chiname", "engname", "localname", "examimp", "checkway", "檢驗期限", "sampid", "計量單位", "列檢日期"],
     "keys": ["ccccode", "列檢日期"],
     "ccc_fields": ["ccccode"]
@@ -127,6 +295,18 @@
     "name": "BSMI逐批檢驗品目",
     "table": "bsmi_batch_inspection_items",
     "format": "XML",
+    "authority": "經濟部標準檢驗局",
+    "official_dataset_url": "https://data.gov.tw/dataset/8876",
+    "content_type": "application/xml",
+    "update_frequency": "每月",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "unique_match_keys", "exact_duplicate_rows", "valid_ccc_format"],
     "fields": ["ccccode", "chiname", "engname", "localname", "prodkindname", "公告規定", "examimp", "檢驗期限", "sampid", "計量單位", "列檢日期", "取樣數量"],
     "keys": ["ccccode", "列檢日期"],
     "ccc_fields": ["ccccode"]
@@ -137,6 +317,18 @@
     "table": "food_additive_standards",
     "keys_unique": false,
     "format": "CSV",
+    "authority": "衛生福利部食品藥物管理署",
+    "official_dataset_url": "https://data.gov.tw/dataset/9640",
+    "content_type": "text/csv",
+    "update_frequency": "不定期",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "nonblank_match_keys", "exact_duplicate_rows"],
     "download_url": "https://data.fda.gov.tw/data/opendata/export/61/csv",
     "fields": ["類別", "中文品名", "英文品名", "使用食品範圍及限量", "使用限制", "規格", "類別說明"],
     "keys": ["中文品名", "英文品名"]
@@ -147,6 +339,18 @@
     "table": "tariff_advance_rulings",
     "keys_unique": false,
     "format": "CSV",
+    "authority": "財政部關務署",
+    "official_dataset_url": "https://data.gov.tw/dataset/6713",
+    "content_type": "text/csv",
+    "update_frequency": "不定期",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "nonblank_match_keys", "exact_duplicate_rows", "valid_ccc_format"],
     "fields": ["稅則分類理由", "稅則", "稅則號別", "統計號別", "檢查碼", "申報貨品名稱", "材質成分", "功能及用途", "發文文號", "發文日期", "中文稅則名稱", "英文稅則名稱", "備註"],
     "keys": ["發文文號"],
     "ccc_fields": ["稅則號別"]
@@ -155,7 +359,20 @@
     "id": "18289",
     "name": "中文法規法律資料檔",
     "table": "taiwan_laws",
+    "keys_unique": false,
     "format": "ZIP",
+    "authority": "法務部",
+    "official_dataset_url": "https://data.gov.tw/dataset/18289",
+    "content_type": "application/zip",
+    "update_frequency": "每月",
+    "license": {
+      "code": "1",
+      "name": "政府資料開放授權條款－第1版",
+      "url": "https://data.gov.tw/license"
+    },
+    "effective_from": null,
+    "effective_to": null,
+    "validation_rules": ["required_fields", "nonempty_payload", "duplicate_headers", "nonblank_match_keys", "exact_duplicate_rows", "zip_member_format", "law_identity_requires_url_and_dates"],
     "fields": ["法規性質", "法規名稱", "法規網址", "法規類別", "最新異動日期", "生效日期", "生效內容", "廢止註記", "是否英譯註記", "英文法規名稱", "附件", "沿革內容", "前言", "法規內容"],
     "nested_fields": ["編章節", "條文"],
     "keys": ["法規名稱"]

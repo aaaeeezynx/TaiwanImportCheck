@@ -180,6 +180,53 @@ class OfficialSnapshotValidatorTests(unittest.TestCase):
         self.assertEqual(sources["8876"]["keys"], ["ccccode", "列檢日期"])
         self.assertIn("取樣數量", sources["8876"]["fields"])
 
+    def test_law_identity_requires_name_official_url_and_valid_dates(self):
+        source = {
+            "fields": ["法規名稱", "法規網址", "最新異動日期", "生效日期"],
+            "keys": ["法規名稱"],
+            "validation_rules": ["law_identity_requires_url_and_dates"],
+        }
+        valid = (
+            "法規名稱,法規網址,最新異動日期,生效日期\n"
+            "測試法規,https://law.moj.gov.tw/LawClass/LawAll.aspx?pcode=X0000001,"
+            "2026-01-02,20260103\n"
+        ).encode("utf-8")
+        invalid = (
+            "法規名稱,法規網址,最新異動日期,生效日期\n"
+            ",https://example.com/law,not-a-date,bad-date\n"
+        ).encode("utf-8")
+
+        valid_result = validate_payload(valid, source)
+        invalid_result = validate_payload(invalid, source)
+
+        self.assertEqual(valid_result["status"], "PASS")
+        self.assertEqual(valid_result["law_identity_invalid_rows"], 0)
+        self.assertEqual(invalid_result["status"], "REVIEW")
+        self.assertEqual(invalid_result["law_identity_invalid_rows"], 1)
+        self.assertEqual(
+            invalid_result["law_identity_issue_counts"],
+            {
+                "blank_law_name": 1,
+                "invalid_law_url": 1,
+                "invalid_latest_modified_date": 1,
+                "invalid_effective_date": 1,
+            },
+        )
+
+    def test_law_identity_allows_blank_effective_date(self):
+        source = {
+            "fields": ["法規名稱", "法規網址", "最新異動日期", "生效日期"],
+            "keys": ["法規名稱"],
+            "validation_rules": ["law_identity_requires_url_and_dates"],
+        }
+        payload = (
+            "法規名稱,法規網址,最新異動日期,生效日期\n"
+            "測試法規,https://law.moj.gov.tw/LawClass/LawAll.aspx?pcode=X0000001,"
+            "20260102,\n"
+        ).encode("utf-8")
+        result = validate_payload(payload, source)
+        self.assertEqual(result["status"], "PASS")
+
 
 if __name__ == "__main__":
     unittest.main()
