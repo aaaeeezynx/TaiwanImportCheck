@@ -1,0 +1,6 @@
+name: taiwan_import_p0
+version: "0.1.0"
+description: P0 Taiwan import mock lookup tool
+kind: standalone
+provides_tools:
+  - p0_import_lookup

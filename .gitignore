@@ -1,0 +1,35 @@
+# Secrets & environment variables (NEVER commit real tokens or API keys)
+.env
+.env.*
+!.env.example
+
+# Local runtime data & SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+data/official_data/*.db
+data/official_data/source_snapshots/
+data/official_data/candidate_snapshots/
+data/official_data/reports/
+data/case_db/
+data/hermes_home/
+logs/
+
+# Python cache & test artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.tmp/
+.venv/
+venv/
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+*.swp

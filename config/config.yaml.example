@@ -1,0 +1,25 @@
+# ============================================================================
+# Hermes Agent P0 專案設定範本 (config.yaml.example)
+# 可複製至隔離的 HERMES_HOME (例如 ./data/hermes_home/config.yaml)
+# 不會覆蓋或影響本機既有的 Hermes 設定
+# ============================================================================
+
+model:
+  default: gpt-4o-mini
+
+plugins:
+  enabled:
+    - taiwan_import_p0
+
+platforms:
+  telegram:
+    enabled: true
+    # 建議由環境變數 TELEGRAM_BOT_TOKEN 與 TELEGRAM_ALLOWED_USERS 注入，不在設定檔硬編碼秘密
+
+gateway:
+  # 未授權私聊不建立配對碼、不回覆，避免陌生人取得任何互動入口
+  unauthorized_dm_behavior: ignore
+
+security:
+  # P0 原則：最小權限，僅開放 P0 查詢插件工具
+  redact_secrets: true

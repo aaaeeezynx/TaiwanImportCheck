@@ -1,0 +1,41 @@
+# ============================================================================
+# TaiwanImportCheck - P0 隔離式 Docker Compose 設定
+# 注意：使用獨立專案與容器名稱 (tic-p0-hermes)，不會刪除、重建或覆蓋任何既有 Hermes 容器或設定
+# ============================================================================
+name: taiwan-import-check-p0
+
+services:
+  tic-p0-hermes:
+    build:
+      context: ${HERMES_SOURCE_DIR:?Set HERMES_SOURCE_DIR to the local Hermes v0.19.1 source checkout}
+      dockerfile: Dockerfile
+    image: ${HERMES_DOCKER_IMAGE:-tic-p0-hermes:local}
+    container_name: tic-p0-hermes
+    working_dir: /workspace/app
+    env_file:
+      - ${HERMES_ENV_FILE:-.env}
+    environment:
+      HERMES_HOME: /opt/data
+      HERMES_WRITE_SAFE_ROOT: /opt/data
+      HERMES_ENABLE_PROJECT_PLUGINS: "1"
+      HERMES_UID: ${HERMES_UID:-10000}
+      HERMES_GID: ${HERMES_GID:-10000}
+      HOME: /opt/data
+      IMAGE_CACHE_DIR: /opt/data/image_cache
+      P0_MOCK_DB_PATH: /opt/data/official_data/p0_mock_tariff.db
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      # 程式碼與插件以唯讀掛載，防止容器內程序修改宿主機原始碼
+      - type: bind
+        source: ./
+        target: /workspace/app
+        read_only: true
+      # 隔離的 P0 測試資料目錄（不觸碰既有 Hermes 資料或憑證）
+      - ./data/hermes_home:/opt/data
+      - ./data/official_data:/opt/data/official_data
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    command: ["gateway", "run"]
