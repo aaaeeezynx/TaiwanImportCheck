@@ -1,11 +1,13 @@
+import hashlib
 import io
 import json
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
-from scripts.validate_official_snapshot import _write_markdown, validate_payload
+from scripts.validate_official_snapshot import _write_markdown, run, validate_payload
 
 
 class OfficialSnapshotValidatorTests(unittest.TestCase):
@@ -134,10 +136,91 @@ class OfficialSnapshotValidatorTests(unittest.TestCase):
             _write_markdown(report, path)
             report_text = path.read_text(encoding="utf-8")
             row = next(line for line in report_text.splitlines() if line.startswith("| 1 |"))
-        self.assertEqual(row.split("|")[6].strip(), "duplicate_keys")
-        self.assertEqual(row.split("|")[7].strip(), "2")
+        self.assertEqual(row.split("|")[3].strip(), "-")
+        self.assertEqual(row.split("|")[4].strip(), "REVIEW")
+        self.assertEqual(row.split("|")[7].strip(), "duplicate_keys")
+        self.assertEqual(row.split("|")[8].strip(), "2")
         self.assertIn("Exact duplicate rows", report_text)
         self.assertIn("pass=0, review=1, fail=0, missing=0", report_text)
+
+    def test_local_validation_prefers_source_snapshot_over_candidate(self):
+        source = {
+            "id": "99991",
+            "name": "測試官方資料",
+            "fields": ["分類代碼", "品名"],
+            "keys": ["分類代碼"],
+        }
+        source_payload = "分類代碼,品名\n12345678,來源版本\n".encode("utf-8")
+        candidate_payload = "分類代碼,品名\n12345678,候選版本\n".encode("utf-8")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "source_snapshots"
+            candidate_dir = root / "candidate_snapshots"
+            report_dir = root / "reports"
+            source_dir.mkdir()
+            candidate_dir.mkdir()
+            (source_dir / "99991.csv").write_bytes(source_payload)
+            (candidate_dir / "99991.csv").write_bytes(candidate_payload)
+            with mock.patch(
+                "scripts.validate_official_snapshot._load_sources",
+                return_value=[source],
+            ):
+                report = run(False, source_dir, report_dir, candidate_dir)
+        result = report["results"][0]
+        self.assertEqual(result["snapshot_origin"], "source_snapshot")
+        self.assertEqual(result["sha256"], hashlib.sha256(source_payload).hexdigest())
+        self.assertNotIn("snapshot_promoted", result)
+
+    def test_local_validation_falls_back_to_candidate_without_promoting(self):
+        source = {
+            "id": "99991",
+            "name": "測試官方資料",
+            "fields": ["分類代碼", "品名"],
+            "keys": ["分類代碼"],
+        }
+        payload = "分類代碼,品名\n12345678,候選版本\n".encode("utf-8")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "source_snapshots"
+            candidate_dir = root / "candidate_snapshots"
+            report_dir = root / "reports"
+            source_dir.mkdir()
+            candidate_dir.mkdir()
+            candidate = candidate_dir / "99991.csv"
+            candidate.write_bytes(payload)
+            with mock.patch(
+                "scripts.validate_official_snapshot._load_sources",
+                return_value=[source],
+            ):
+                report = run(False, source_dir, report_dir, candidate_dir)
+        result = report["results"][0]
+        self.assertEqual(result["snapshot_origin"], "candidate_snapshot")
+        self.assertEqual(result["file"], str(candidate))
+        self.assertFalse(result["snapshot_promoted"])
+        self.assertFalse((source_dir / "99991.csv").exists())
+
+    def test_local_validation_reports_missing_when_no_snapshot_exists(self):
+        source = {
+            "id": "99991",
+            "name": "測試官方資料",
+            "fields": ["分類代碼", "品名"],
+            "keys": ["分類代碼"],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with mock.patch(
+                "scripts.validate_official_snapshot._load_sources",
+                return_value=[source],
+            ):
+                report = run(
+                    False,
+                    root / "source_snapshots",
+                    root / "reports",
+                    root / "candidate_snapshots",
+                )
+        result = report["results"][0]
+        self.assertEqual(result["status"], "MISSING")
+        self.assertNotIn("snapshot_origin", result)
 
     def test_zip_prefers_larger_xml_data_over_schema_csv(self):
         memory = io.BytesIO()

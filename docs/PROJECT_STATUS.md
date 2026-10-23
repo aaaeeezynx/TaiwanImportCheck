@@ -8,9 +8,9 @@
 ## 1. 目前結論
 
 - P0 的程式碼、權限控制、Mock SQLite 查詢與 Hermes plugin 整合已有自動測試；
-  2026-10-23 實跑 53 項測試全部通過。
+  2026-10-23 實跑 58 項測試全部通過。
 - 官方參考資料庫已建立 18 個來源的 schema 與版本管理，但這不等於資料已可
-  正式使用。最新本機核驗結果是 14 PASS、3 REVIEW、1 FAIL、0 MISSING，
+  正式使用。最新本機核驗結果是 14 PASS、3 REVIEW、0 FAIL、1 MISSING，
   0 import errors。
 - 目前有 14 個來源具備 active version；`92103`、`5996`、`7078` 已有候選快照，
   但核驗均為 `REVIEW`；`8876` 尚無候選快照。這 4 個來源都沒有可啟用版本。
@@ -97,7 +97,7 @@ P0 不包含案件管理、網站、多 Agent、正式申報、正式法規判�
 | 18289 | `taiwan_laws` | PASS | 有 |
 
 表中沒有 active version 的來源，代表目前沒有可啟用快照，不等於
-`candidate_snapshots/` 沒有檔案。2026-10-23 另行直接核驗候選檔，結果如下：
+2026-10-23 另行直接核驗 `candidate_snapshots/` 的現有候選檔，結果如下：
 
 | Dataset | 候選檔 | 候選核驗 | 筆數 | 重複情況 |
 |---|---|---:|---:|---|
@@ -107,8 +107,9 @@ P0 不包含案件管理、網站、多 Agent、正式申報、正式法規判�
 | 8876 | 無 | 無候選檔 | - | - |
 
 上述三個候選檔的缺失欄位、重複欄名、空白鍵與無效 CCC 數量均為 0；阻擋啟用
-的問題是重複資料語意尚未確認。候選快照不能直接供查詢，只有 `PASS` 才會匯入
-並切換 active version。
+的問題是重複資料語意尚未確認。候選快照不能直接供查詢；候選檔即使格式核驗
+通過，也只會記為 `CANDIDATE_PASS`，必須先明確提升至 `source_snapshots/`
+並通過正式核驗，才可能以 `PASS` 匯入並切換 active version。
 
 `9714` 的最新核驗、`official_dataset_registry.last_status` 與 active version
 均為 PASS，先前舊 FAIL 狀態已修正寫回；這仍不表示其資料內容已具備正式法律效力。
@@ -158,7 +159,7 @@ P0 不包含案件管理、網站、多 Agent、正式申報、正式法規判�
 
 ### 5.4 `8876` BSMI 候選快照缺失
 
-`8876` 目前沒有 `candidate_snapshots/` 檔案。下載曾出現 Windows curl
+`8876` 目前沒有 `candidate_snapshots/` 檔案，核驗結果為 `MISSING`。下載曾出現 Windows curl
 `SEC_E_UNTRUSTED_ROOT`，但沒有足夠證據斷定所有失敗都來自 TLS 憑證；應保留
 失敗日誌與下載證據再判斷。不得使用 `-k`、關閉憑證驗證、忽略憑證鏈或把 HTTP
 降級當成解法。
@@ -204,7 +205,8 @@ Windows 排程名稱為 `TaiwanImportCheck Official Data Weekly Update`，已建
   索引檢查；完整快照與內容核驗仍每週一次。
 - 一般許可證、設備清單與案例資料每週檢查；有重大公告時手動立即執行
   `--download`。
-- 相同 SHA-256 不新增版本；只有 PASS 才匯入並切換 active version。
+- 相同 SHA-256 不新增版本；只有已提升的來源快照核驗為 `PASS` 才匯入並切換
+  active version，候選快照通過只記為 `CANDIDATE_PASS`。
 - REVIEW、FAIL、MISSING 一律保留舊版本，不自動覆蓋；失敗時保留錯誤摘要，
   不把 secrets 寫進報告。
 - 下一階段增加版本差異報告、CCC/規定/機關跨表關聯檢查、生效與失效日期檢查、
@@ -227,12 +229,14 @@ Windows 排程名稱為 `TaiwanImportCheck Official Data Weekly Update`，已建
 
 `version_id`、`dataset_id`、`sha256`、`source_url`、`metadata_modified`、
 `update_frequency`、`fetched_at`、`validated_at`、`record_count`、
-`validation_status`。
+`validation_status`，以及主管機關、格式、授權、有效期間與核驗規則等來源
+metadata。
 
 目前 active pointer 與最近一次檢查結果放 `official_dataset_registry`：
 
 `dataset_id`、`dataset_name`、`source_table`、`active_version_id`、
-`last_check_at`、`last_status`、`last_error`。
+`active_sha256`、`last_check_at`、`last_status`、`last_error`、`metadata_modified`
+與來源 manifest metadata。
 
 常見查詢欄位對應：
 
@@ -286,7 +290,7 @@ docker exec -e PYTHONPATH=/opt/hermes -e P0_TEST_TEMP_ROOT=/tmp/tic-p0-tests tic
   `ResourceExhausted: Worker local total request limit reached (64/16)`，
   這是暫時性的供應商限流，不代表模型能力已完整驗證。
 - 18 個來源仍有 4 個沒有 active version：`92103`、`5996`、`7078` 的候選快照
-  核驗為 `REVIEW`，`8876` 尚無候選快照。
+  核驗為 `REVIEW`，`8876` 尚無候選快照且核驗為 `MISSING`。
 - 正式資料庫尚未接入 Hermes，這是刻意的隔離，不是漏接。
 - 下一步先處理 `92103`、`5996`、`7078` 的重複資料語意與來源品質，並補抓或
   診斷 `8876`；再補來源目錄、版本差異與人工覆核，完成後才評估讓正式資料庫

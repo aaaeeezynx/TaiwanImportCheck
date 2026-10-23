@@ -461,6 +461,7 @@ class OfficialDatabaseTests(unittest.TestCase):
                 "results": [{
                     "id": "99991",
                     "status": "PASS",
+                    "snapshot_origin": "source_snapshot",
                     "file": str(snapshot),
                     "source_url": "https://data.gov.tw/test.csv",
                     "metadata_modified": "2026-01-01",
@@ -500,6 +501,126 @@ class OfficialDatabaseTests(unittest.TestCase):
         self.assertEqual(result["summary"]["activated"], 1)
         self.assertEqual(rows, [("12345678", "測試商品")])
         self.assertEqual(update_report["datasets"][0]["database_action"], "activated")
+
+    def test_candidate_pass_is_validated_but_not_activated(self):
+        payload = "分類代碼,品名\n12345678,候選版本\n".encode("utf-8")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "source_snapshots"
+            candidate_dir = root / "candidate_snapshots"
+            source_dir.mkdir()
+            candidate_dir.mkdir()
+            snapshot = candidate_dir / "99991.csv"
+            snapshot.write_bytes(payload)
+            db_path = root / "official_reference.db"
+            report = {
+                "generated_at": "2026-01-01T00:00:00+00:00",
+                "mode": "validate_local_snapshots",
+                "results": [{
+                    "id": "99991",
+                    "status": "PASS",
+                    "snapshot_origin": "candidate_snapshot",
+                    "file": str(snapshot),
+                }],
+                "summary": {
+                    "total": 1,
+                    "pass": 1,
+                    "review": 0,
+                    "fail": 0,
+                    "missing": 0,
+                },
+            }
+            with (
+                mock.patch.object(
+                    update_official_data, "load_sources", return_value=[self.source]
+                ),
+                mock.patch.object(update_official_data, "run", return_value=report),
+            ):
+                result = update_official_data.run_update(
+                    download=False,
+                    db_path=db_path,
+                    source_dir=source_dir,
+                    candidate_dir=candidate_dir,
+                    report_dir=root / "reports",
+                )
+
+            with closing(sqlite3.connect(db_path)) as connection:
+                registry = connection.execute(
+                    """SELECT active_version_id, last_status
+                       FROM official_dataset_registry WHERE dataset_id = '99991'"""
+                ).fetchone()
+                version_count = connection.execute(
+                    "SELECT COUNT(*) FROM official_dataset_versions"
+                ).fetchone()[0]
+
+        dataset = result["datasets"][0]
+        self.assertEqual(result["summary"]["activated"], 0)
+        self.assertEqual(result["summary"]["candidate_pass"], 1)
+        self.assertEqual(result["summary"]["import_errors"], 0)
+        self.assertEqual(dataset["database_action"], "kept_previous")
+        self.assertTrue(dataset["not_activated"])
+        self.assertEqual(dataset["reason"], "candidate_snapshot_requires_promotion")
+        self.assertEqual(registry, (None, "CANDIDATE_PASS"))
+        self.assertEqual(version_count, 0)
+
+    def test_candidate_review_keeps_existing_active_version(self):
+        good = "分類代碼,品名\n12345678,舊版本\n".encode("utf-8")
+        self._import(good)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "source_snapshots"
+            candidate_dir = root / "candidate_snapshots"
+            source_dir.mkdir()
+            candidate_dir.mkdir()
+            snapshot = candidate_dir / "99991.csv"
+            snapshot.write_bytes(
+                "分類代碼,品名\n12345678,新版本\n12345678,重複版本\n".encode(
+                    "utf-8"
+                )
+            )
+            report = {
+                "generated_at": "2026-01-01T00:00:00+00:00",
+                "mode": "validate_local_snapshots",
+                "results": [{
+                    "id": "99991",
+                    "status": "REVIEW",
+                    "snapshot_origin": "candidate_snapshot",
+                    "file": str(snapshot),
+                }],
+                "summary": {
+                    "total": 1,
+                    "pass": 0,
+                    "review": 1,
+                    "fail": 0,
+                    "missing": 0,
+                },
+            }
+            with (
+                mock.patch.object(
+                    update_official_data, "load_sources", return_value=[self.source]
+                ),
+                mock.patch.object(update_official_data, "run", return_value=report),
+            ):
+                result = update_official_data.run_update(
+                    download=False,
+                    db_path=self.db_path,
+                    source_dir=source_dir,
+                    candidate_dir=candidate_dir,
+                    report_dir=root / "reports",
+                )
+
+            with closing(sqlite3.connect(self.db_path)) as connection:
+                rows = connection.execute(
+                    'SELECT "品名" FROM active_test_official_data'
+                ).fetchall()
+                registry_status = connection.execute(
+                    """SELECT last_status FROM official_dataset_registry
+                       WHERE dataset_id = '99991'"""
+                ).fetchone()[0]
+
+        self.assertEqual(result["datasets"][0]["database_action"], "kept_previous")
+        self.assertEqual(rows, [("舊版本",)])
+        self.assertEqual(registry_status, "REVIEW")
 
     def test_validated_snapshot_path_rejects_file_outside_source_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:

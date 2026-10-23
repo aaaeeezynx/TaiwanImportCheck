@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch, validate, and atomically import PASS official-source snapshots."""
+"""Fetch, validate, and atomically import approved official-source snapshots."""
 
 from __future__ import annotations
 
@@ -72,6 +72,24 @@ def run_update(
                 record_validation_result(db_path, dataset_id, status, result.get("error"))
                 updates.append({"id": dataset_id, "status": status, "database_action": "kept_previous"})
                 continue
+            if result.get("snapshot_origin") == "candidate_snapshot":
+                record_validation_result(
+                    db_path,
+                    dataset_id,
+                    "CANDIDATE_PASS",
+                    "candidate snapshot validated but was not promoted",
+                )
+                updates.append({
+                    "id": dataset_id,
+                    "status": "CANDIDATE_PASS",
+                    "database_action": "kept_previous",
+                    "snapshot_origin": "candidate_snapshot",
+                    "not_activated": True,
+                    "reason": "candidate_snapshot_requires_promotion",
+                })
+                continue
+            if result.get("snapshot_origin") != "source_snapshot":
+                raise ValueError("PASS result does not identify a source snapshot")
             if dataset_id not in sources:
                 raise ValueError(f"PASS result has unknown dataset id {dataset_id}")
             snapshot = _validated_snapshot_path(result, source_dir)
@@ -88,6 +106,7 @@ def run_update(
                 "id": dataset_id,
                 "status": "PASS",
                 "database_action": "activated" if imported["activated"] else "kept_previous",
+                "snapshot_origin": "source_snapshot",
                 **imported,
             })
         except Exception as exc:
@@ -107,6 +126,9 @@ def run_update(
     summary = {
         **report["summary"],
         "activated": sum(item["database_action"] == "activated" for item in updates),
+        "candidate_pass": sum(
+            item.get("status") == "CANDIDATE_PASS" for item in updates
+        ),
         "new_versions": sum(
             item.get("database_action") == "activated" and item.get("new_version", False)
             for item in updates

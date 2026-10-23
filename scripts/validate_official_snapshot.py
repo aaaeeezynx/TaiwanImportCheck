@@ -504,6 +504,22 @@ def _atomic_write(path: Path, raw: bytes) -> None:
     temporary.replace(path)
 
 
+def _select_local_snapshot(
+    dataset_id: str,
+    source_dir: Path,
+    candidate_dir: Path,
+) -> tuple[Path, str] | None:
+    """Prefer an approved source snapshot, then fall back to a candidate."""
+    for directory, origin in (
+        (source_dir, "source_snapshot"),
+        (candidate_dir, "candidate_snapshot"),
+    ):
+        matches = sorted(directory.glob(dataset_id + ".*"))
+        if matches:
+            return matches[0], origin
+    return None
+
+
 def run(
     download: bool,
     source_dir: Path,
@@ -532,13 +548,18 @@ def run(
                 candidate_path = (candidate_dir or report_dir / "candidates") / source_path.name
                 _atomic_write(candidate_path, raw)
                 item["candidate_file"] = str(candidate_path)
+                item["snapshot_origin"] = "candidate_snapshot"
             else:
-                matches = sorted(source_dir.glob(dataset_id + ".*"))
-                if not matches:
+                selected = _select_local_snapshot(
+                    dataset_id,
+                    source_dir,
+                    candidate_dir or report_dir / "candidates",
+                )
+                if selected is None:
                     item.update({"status": "MISSING", "error": "no local snapshot; rerun with --download"})
                     results.append(item)
                     continue
-                source_path = matches[0]
+                source_path, item["snapshot_origin"] = selected
                 raw = source_path.read_bytes()
             validation = validate_payload(raw, source)
             item.update(validation)
@@ -549,12 +570,19 @@ def run(
             if download and validation["status"] == "PASS":
                 _atomic_write(source_path, raw)
                 item["file"] = str(source_path)
+                item["snapshot_origin"] = "source_snapshot"
                 item["snapshot_promoted"] = True
             elif download:
+                item["snapshot_origin"] = "candidate_snapshot"
                 item["snapshot_promoted"] = False
                 item["last_good_snapshot_preserved"] = source_path.exists()
             else:
                 item["file"] = str(source_path)
+                if item["snapshot_origin"] == "candidate_snapshot":
+                    item["snapshot_promoted"] = False
+                    item["last_good_snapshot_preserved"] = source_dir.joinpath(
+                        source_path.name
+                    ).exists()
         except Exception as exc:  # report one failed source without skipping the rest
             item.update({"status": "FAIL", "error": f"{type(exc).__name__}: {exc}"})
         results.append(item)
@@ -586,13 +614,14 @@ def _write_markdown(report: dict[str, Any], path: Path) -> None:
         f"Generated: {report['generated_at']}",
         f"Mode: {report['mode']}",
         "",
-        "| ID | Dataset | Status | Rows | Missing fields | Quality flags | Duplicate keys | Exact duplicate rows | Key uniqueness | Blank keys | Invalid CCC | Metadata modified | Update frequency | SHA-256 |",
-        "|---|---|---:|---:|---|---|---:|---:|---|---:|---:|---|---|---|",
+        "| ID | Dataset | Snapshot origin | Status | Rows | Missing fields | Quality flags | Duplicate keys | Exact duplicate rows | Key uniqueness | Blank keys | Invalid CCC | Metadata modified | Update frequency | SHA-256 |",
+        "|---|---|---|---:|---:|---|---|---:|---:|---|---:|---:|---|---|---|",
     ]
     for item in report["results"]:
         lines.append(
-            "| {id} | {name} | {status} | {rows} | {missing} | {quality} | {duplicates} | {duplicate_rows} | {key_uniqueness} | {blank} | {invalid_ccc} | {modified} | {frequency} | {sha} |".format(
+            "| {id} | {name} | {origin} | {status} | {rows} | {missing} | {quality} | {duplicates} | {duplicate_rows} | {key_uniqueness} | {blank} | {invalid_ccc} | {modified} | {frequency} | {sha} |".format(
                 id=item.get("id", ""), name=item.get("name", "").replace("|", "\\|"),
+                origin=item.get("snapshot_origin", "-"),
                 status=item.get("status", "FAIL"), rows=item.get("row_count", ""),
                 missing=", ".join(item.get("missing_fields", [])) or "-",
                 quality=", ".join(item.get("quality_flags", [])) or "-",

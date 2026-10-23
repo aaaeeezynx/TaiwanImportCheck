@@ -67,7 +67,14 @@ ALLOWED_VALIDATION_RULES = {
     "zip_member_format",
     "law_identity_requires_url_and_dates",
 }
-VALIDATION_STATUSES = frozenset({"PASS", "REVIEW", "FAIL", "MISSING", "IMPORT_FAIL"})
+VALIDATION_STATUSES = frozenset({
+    "PASS",
+    "CANDIDATE_PASS",
+    "REVIEW",
+    "FAIL",
+    "MISSING",
+    "IMPORT_FAIL",
+})
 FAILURE_STATUSES = frozenset({"FAIL", "IMPORT_FAIL"})
 REGISTRY_METADATA_COLUMNS = {
     "active_sha256": "TEXT",
