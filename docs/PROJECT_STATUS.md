@@ -20,8 +20,10 @@
   test 通過 plugin、SQLite、文字／圖片／URL 輸入與 allowlist 驗證。
 - Telegram Bot 憑證已配置且 `getMe` 實測成功；目前 gateway 日誌已記錄
   `Connected to Telegram (polling mode)`、`telegram connected` 與 1 個平台
-  已上線。目前尚無 allowlist 帳號的真實訊息事件處理證據，因此 Telegram
-  live E2E 尚未完成。
+  已上線。2026-10-23 複查 `getMe` 與 `getWebhookInfo` 均成功，webhook 未設定、
+  pending updates 為 0 且無 API 回報錯誤；期間仍有 DNS 解析失敗與
+  `RemoteProtocolError` 重連紀錄。目前尚無 allowlist 帳號的真實訊息事件處理
+  證據，因此 Telegram live E2E 尚未完成。
 - Hermes 已設定 NVIDIA NIM 測試模型
   `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`，基本 one-shot 回覆已通過；
   CLI 工具呼叫也已實際進入 `p0_import_lookup`。先前 CLI 缺少 Telegram session
@@ -71,7 +73,7 @@ P0 不包含案件管理、網站、多 Agent、正式申報、正式法規判�
 
 最新本機核驗報告位於
 `data/official_data/reports/official_source_validation.json`，結果為
-14 PASS、3 REVIEW、1 FAIL、0 MISSING；更新報告
+14 PASS、3 REVIEW、0 FAIL、1 MISSING；更新報告
 `data/official_data/reports/official_data_update.json` 顯示 14 個 active version、
 0 個新版本與 0 個匯入錯誤。
 
@@ -91,7 +93,7 @@ P0 不包含案件管理、網站、多 Agent、正式申報、正式法規判�
 | 9576 | `medical_device_licenses` | PASS | 有 |
 | 7078 | `bsmi_required_inspections` | REVIEW | 無 |
 | 9714 | `bsmi_surveillance_items` | PASS | 有 |
-| 8876 | `bsmi_batch_inspection_items` | FAIL | 無 |
+| 8876 | `bsmi_batch_inspection_items` | MISSING | 無 |
 | 9640 | `food_additive_standards` | PASS | 有 |
 | 6713 | `tariff_advance_rulings` | PASS | 有 |
 | 18289 | `taiwan_laws` | PASS | 有 |
@@ -196,7 +198,7 @@ P0 不包含案件管理、網站、多 Agent、正式申報、正式法規判�
 Windows 排程名稱為 `TaiwanImportCheck Official Data Weekly Update`，已建立、
 啟用並設定為每週日 03:00（本機時區）檢查 18 個來源。2026-10-23 曾手動觸發
 排程，`LastRunTime` 已有紀錄，`LastTaskResult` 為 `1`，下次執行時間為
-2026-10-25 03:00。結果碼 `1` 不是程式崩潰，而是更新器在仍有 REVIEW／FAIL
+2026-10-25 03:00。結果碼 `1` 不是程式崩潰，而是更新器在仍有 REVIEW／MISSING
 來源時刻意回傳非零；報告已產生，但不可把所有來源描述成更新成功。
 
 低維護成本建議：
@@ -279,11 +281,15 @@ docker exec -e PYTHONPATH=/opt/hermes -e P0_TEST_TEMP_ROOT=/tmp/tic-p0-tests tic
 
 ## 9. 目前限制與下一步
 
-- Telegram 真實訊息 live E2E、圖片事件到 `image_path` 的實際傳遞，以及
-  Docker 重啟後的自動恢復行為尚未驗證。
+- Telegram 真實訊息 live E2E、圖片事件到 `image_path` 的實際傳遞、Telegram
+  網路連線的長時間穩定性，以及 Docker 重啟後的自動恢復行為尚未驗證。
 - 本輪已通過 Docker 建置、容器啟動、gateway 與容器內 smoke test；Bot Token
   也通過 `getMe` 驗證。目前日誌已顯示 Telegram polling 連線；但尚無 allowlist
   帳號的真實訊息事件，因此不能把 Telegram live E2E 或完整回覆鏈路標示為完成。
+- Telegram API 在 2026-10-23 複查時可用，`getWebhookInfo` 顯示 webhook 未設定、
+  pending updates 為 0、無 API 錯誤；但 gateway 日誌仍有 DNS 解析失敗與
+  `RemoteProtocolError` 重連，需持續觀察並排除 Docker DNS、IPv6 或網路路徑
+  問題。
 - Compose 已加入 gateway process healthcheck，但這只確認 Hermes gateway
   程序可回應，不代表 Telegram polling 已連線，也不代表平台事件已成功送達。
 - NVIDIA NIM 測試模型基本回覆與 CLI plugin 呼叫已通過；先前曾遇到
