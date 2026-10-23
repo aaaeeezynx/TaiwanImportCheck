@@ -54,6 +54,7 @@ class P0LookupTests(unittest.TestCase):
                 "ADMIN_TELEGRAM_USERS": ADMIN_USER,
                 "P0_MOCK_DB_PATH": str(self.db_path),
                 "P0_ALLOW_LIVE_URL_FETCH": "0",
+                "HERMES_HOME": str(Path(self.temp_dir.name) / "hermes_home"),
             },
             clear=False,
         )
@@ -89,6 +90,24 @@ class P0LookupTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["input_summary"]["has_image"])
         self.assertGreaterEqual(len(result["data"]["candidates"]), 1)
+
+    def test_missing_image_path_falls_back_to_description(self) -> None:
+        missing_path = Path(self.temp_dir.name) / "missing-product.png"
+
+        result = core.run_p0_lookup(
+            user_id=ALLOWED_USER,
+            image_path=str(missing_path),
+            image_description="白色真無線藍牙耳機與充電盒",
+        )
+
+        self.assertEqual(result["status"], "ok")
+        image_info = result["input_summary"]["image_info"]
+        self.assertTrue(image_info["provided"])
+        self.assertFalse(image_info["file_exists"])
+        self.assertFalse(image_info["file_readable"])
+        self.assertFalse(image_info["file_valid"])
+        self.assertIn("不存在", image_info["warning"])
+        self.assertIn("藍牙耳機", result["input_summary"]["combined_search_keywords"])
 
     def test_product_url_is_parsed_without_live_fetch(self) -> None:
         result = core.run_p0_lookup(
@@ -205,6 +224,112 @@ class P0LookupTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 3)
         self.assertEqual(json.loads(completed.stdout)["status"], "unauthorized")
         self.assertNotIn(UNAUTHORIZED_USER, completed.stdout + completed.stderr)
+
+
+class P0PairingAuthTests(unittest.TestCase):
+    """Authorization must honor Hermes DM pairing in addition to the env allowlist."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT)
+        self.addCleanup(self.temp_dir.cleanup)
+        self.db_path = Path(self.temp_dir.name) / "p0_test_tariff.db"
+        core.ensure_mock_db(self.db_path, force_reset=True)
+        self.pairing_dir = Path(self.temp_dir.name) / "pairing"
+        self.pairing_dir.mkdir(parents=True, exist_ok=True)
+        self.approved_path = self.pairing_dir / "platforms" / "pairing" / "telegram-approved.json"
+        self.approved_path.parent.mkdir(parents=True, exist_ok=True)
+        self.env_patcher = patch.dict(
+            os.environ,
+            {
+                # Env allowlist intentionally empty; only pairing grants access.
+                "TELEGRAM_ALLOWED_USERS": "",
+                "ADMIN_TELEGRAM_USERS": "",
+                "P0_MOCK_DB_PATH": str(self.db_path),
+                "P0_ALLOW_LIVE_URL_FETCH": "0",
+                "HERMES_HOME": str(self.pairing_dir),
+            },
+            clear=False,
+        )
+        self.env_patcher.start()
+        self.addCleanup(self.env_patcher.stop)
+
+    def _write_approved(self, payload: dict) -> None:
+        self.approved_path.write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+        )
+
+    def test_paired_user_can_lookup_with_empty_env_allowlist(self) -> None:
+        PAIRED = "200000002"
+        self._write_approved({PAIRED: {"user_name": "tester", "approved_at": 1.0}})
+
+        result = core.run_p0_lookup(user_id=PAIRED, query="藍牙耳機")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertGreaterEqual(len(result["data"]["candidates"]), 1)
+        self.assertNotIn(PAIRED, json.dumps(result, ensure_ascii=False))
+
+    def test_non_paired_user_is_rejected_when_allowlist_empty(self) -> None:
+        self._write_approved({"200000002": {"user_name": "tester", "approved_at": 1.0}})
+
+        result = core.run_p0_lookup(user_id="200000099", query="藍牙耳機")
+
+        self.assertEqual(result["status"], "unauthorized")
+        self.assertEqual(result["error"]["code"], "UNAUTHORIZED_USER")
+
+    def test_paired_user_cannot_use_admin_status(self) -> None:
+        PAIRED = "200000002"
+        self._write_approved({PAIRED: {"user_name": "tester", "approved_at": 1.0}})
+        # Admin list stays empty: pairing never grants admin.
+
+        result = core.run_p0_lookup(user_id=PAIRED, action="admin_status")
+
+        self.assertEqual(result["status"], "unauthorized")
+        self.assertEqual(result["error"]["code"], "UNAUTHORIZED_ADMIN")
+
+    def test_malformed_approved_file_fails_closed(self) -> None:
+        # Not a JSON object: must not grant or throw.
+        self.approved_path.write_text("this is not json", encoding="utf-8")
+
+        result = core.run_p0_lookup(user_id="200000002", query="藍牙耳機")
+
+        self.assertEqual(result["status"], "unauthorized")
+        self.assertEqual(result["error"]["code"], "ALLOWLIST_NOT_CONFIGURED")
+
+    def test_legacy_pairing_dir_is_also_read(self) -> None:
+        PAIRED = "200000002"
+        legacy_dir = Path(self.temp_dir.name) / "legacy_pairing"
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        legacy_path = legacy_dir / "pairing" / "telegram-approved.json"
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text(
+            json.dumps({PAIRED: {"user_name": "tester"}}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        os.environ["HERMES_HOME"] = str(legacy_dir)
+
+        result = core.run_p0_lookup(user_id=PAIRED, query="藍牙耳機")
+
+        self.assertEqual(result["status"], "ok")
+
+    def test_external_default_hermes_home_is_not_read(self) -> None:
+        external_home = Path(self.temp_dir.name) / "external_home"
+        external_approved = (
+            external_home / ".hermes" / "platforms" / "pairing" / "telegram-approved.json"
+        )
+        external_approved.parent.mkdir(parents=True, exist_ok=True)
+        external_approved.write_text(
+            json.dumps(
+                {"200000003": {"user_name": "outside-profile", "approved_at": 1.0}},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        with patch.dict(os.environ, {"HOME": str(external_home)}, clear=False):
+            result = core.run_p0_lookup(user_id="200000003", query="藍牙耳機")
+
+        self.assertEqual(result["status"], "unauthorized")
+        self.assertEqual(result["error"]["code"], "ALLOWLIST_NOT_CONFIGURED")
 
 
 @unittest.skipUnless(

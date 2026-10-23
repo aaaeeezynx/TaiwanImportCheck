@@ -94,9 +94,20 @@ Hermes Agent 呼叫本地 Python 工具 `p0_import_lookup`，查詢測試用 SQL
 假資料後回覆 Telegram。所有 CCC、稅率與檢驗內容均為虛構測試值，不是正式
 稅則、法規或免驗建議。
 
-完整環境檢查、Windows 本機隔離啟動、Docker Compose、Telegram 測試步驟、
-allowlist 行為與目前限制，請見
-[`P0_驗證說明.md`](P0_驗證說明.md)。最小本機測試如下：
+授權採預設拒絕，不會因為使用者加入 Bot 就自動取得查詢權限。P0 支援兩種
+低維護授權方式：
+
+1. 在 `.env` 的 `TELEGRAM_ALLOWED_USERS` 填入已核准的純數字 User ID。
+2. 讓使用者先私聊 Bot，取得一次性配對碼，再由管理者在容器內執行
+   `hermes pairing list` 與
+   `hermes pairing approve telegram <request_id>` 人工核准。
+
+管理動作只接受 `ADMIN_TELEGRAM_USERS` 內的使用者；一般 pairing 不會授予
+管理權限。完整操作、Docker 指令與未授權測試方式請見
+[`P0_驗證說明.md`](P0_驗證說明.md)。目前尚缺真人 Telegram 的文字、圖片與
+URL live E2E 證據，因此 Telegram 完整回覆鏈路不能標示為已驗證完成。
+
+最小本機測試如下：
 
 ```powershell
 C:\Users\aaaee\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe scripts\init_mock_db.py

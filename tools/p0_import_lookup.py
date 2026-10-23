@@ -213,19 +213,69 @@ def get_allowed_users() -> Tuple[Set[str], Set[str]]:
     return allowed_users, admin_users
 
 
+def get_approved_pairing_users(platform: str = "telegram") -> Set[str]:
+    """
+    Read user IDs approved via Hermes DM pairing from the pairing store.
+
+    The pairing store mirrors the gateway's own authorization grant, so a user
+    who completed the pairing handshake (operator approved via the CLI) is
+    authorized to use the lookup tool without being listed in
+    TELEGRAM_ALLOWED_USERS. Admin grants never come from pairing.
+
+    Fail-closed: any read/parse error returns an empty set and never raises.
+    """
+    home = os.getenv("HERMES_HOME", "").strip()
+    if home:
+        # HERMES_HOME is authoritative. Do not fall back to another profile,
+        # because a stale grant in ~/.hermes must not authorize this instance.
+        roots = [home]
+    else:
+        roots = [os.path.join(os.path.expanduser("~"), ".hermes")]
+
+    candidate_dirs: List[str] = []
+    for root in roots:
+        candidate_dirs.append(os.path.join(root, "platforms", "pairing"))
+        candidate_dirs.append(os.path.join(root, "pairing"))
+
+    approved: Set[str] = set()
+    for base in candidate_dirs:
+        path = os.path.join(base, f"{platform}-approved.json")
+        try:
+            if not os.path.isfile(path):
+                continue
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict):
+                for key in data.keys():
+                    if key and str(key).strip():
+                        approved.add(str(key).strip())
+        except (OSError, ValueError):
+            # Never surface or log sensitive content; fail closed for this file.
+            continue
+    return approved
+
+
 def check_authorization(user_id: Optional[str], action: str = "lookup") -> Tuple[bool, str, str]:
     """
-    Fail-closed authorization check against TELEGRAM_ALLOWED_USERS and ADMIN_TELEGRAM_USERS.
+    Fail-closed authorization check.
+
+    Authorization sources (union, all fail-closed):
+      - TELEGRAM_ALLOWED_USERS / ADMIN_TELEGRAM_USERS environment variables
+      - Hermes DM pairing approved store (operator approved via the CLI)
+
+    Admin grants come ONLY from ADMIN_TELEGRAM_USERS; pairing never grants admin.
     Returns (is_authorized, error_code, error_message).
     """
     uid = str(user_id or "").strip()
     allowed_users, admin_users = get_allowed_users()
+    paired_users = get_approved_pairing_users()
+    effective_allowed = allowed_users | paired_users
 
-    if not allowed_users:
+    if not effective_allowed:
         return (
             False,
             "ALLOWLIST_NOT_CONFIGURED",
-            "系統尚未設定 TELEGRAM_ALLOWED_USERS 白名單（預設拒絕所有請求）。",
+            "目前沒有任何授權來源（環境白名單或配對核准），預設拒絕所有請求。",
         )
 
     if not uid:
@@ -235,7 +285,7 @@ def check_authorization(user_id: Optional[str], action: str = "lookup") -> Tuple
             "目前無法取得授權身分，查詢未執行；請從已授權的 Telegram 私聊使用本服務。",
         )
 
-    if uid not in allowed_users:
+    if uid not in effective_allowed:
         return (
             False,
             "UNAUTHORIZED_USER",
@@ -506,20 +556,43 @@ def inspect_image_input(
         if stem_tokens:
             info["extracted_keywords"] = f"{info['extracted_keywords']} {' '.join(stem_tokens)}".strip()
 
-        if ext and ext not in ALLOWED_IMAGE_EXTENSIONS:
-            info["file_valid"] = False
-            info["warning"] = f"圖片副檔名 ({ext}) 非標準格式（建議使用 jpg/png/webp）。"
-        elif p.exists() and p.is_file():
-            size_bytes = p.stat().st_size
-            info["file_exists"] = True
-            info["file_size_bytes"] = size_bytes
-            info["file_valid"] = size_bytes <= MAX_IMAGE_BYTES
-            if size_bytes > MAX_IMAGE_BYTES:
-                info["warning"] = "圖片檔案超過 10MB 上限，僅使用圖片描述與文字進行查詢。"
-        else:
+        warnings: List[str] = []
+        info["file_exists"] = False
+        info["file_readable"] = False
+        info["file_valid"] = False
+        try:
+            exists = p.exists()
+        except OSError:
+            exists = False
+
+        if not exists:
             info["file_exists"] = False
-            info["file_valid"] = True
-            info["note"] = "未直接讀取本地圖片實體檔，已採用多模態圖片描述與檔名特徵進行查詢。"
+            warnings.append("圖片路徑不存在，已降級使用圖片描述、文字或檔名特徵進行查詢。")
+        elif not p.is_file():
+            info["file_exists"] = True
+            warnings.append("圖片路徑不是可讀取的檔案，已降級使用圖片描述、文字或檔名特徵進行查詢。")
+        else:
+            info["file_exists"] = True
+            try:
+                with p.open("rb") as image_file:
+                    image_file.read(16)
+                size_bytes = p.stat().st_size
+            except OSError:
+                warnings.append("圖片檔案無法讀取，已降級使用圖片描述、文字或檔名特徵進行查詢。")
+            else:
+                info["file_readable"] = True
+                info["file_size_bytes"] = size_bytes
+                if size_bytes > MAX_IMAGE_BYTES:
+                    warnings.append("圖片檔案超過 10MB 上限，僅使用圖片描述與文字進行查詢。")
+                elif ext and ext not in ALLOWED_IMAGE_EXTENSIONS:
+                    warnings.append(
+                        f"圖片副檔名 ({ext}) 非標準格式（建議使用 jpg/png/webp）。"
+                    )
+                else:
+                    info["file_valid"] = True
+
+        if warnings:
+            info["warning"] = " ".join(warnings)
 
     return info
 

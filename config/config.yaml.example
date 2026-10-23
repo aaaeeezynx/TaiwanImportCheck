@@ -18,6 +18,11 @@ plugins:
 platforms:
   telegram:
     enabled: true
+    # 未授權私聊處理方式：pair = 陌生人私聊會收到一次性配對碼，由管理者
+    # 透過 `hermes pairing approve telegram <request_id>` 核准後才能查詢；
+    # ignore = 直接略過不回覆。P0 預設 pair 以支援「加機器人就配對」的低成本上線，
+    # 同時保留人工核准閘門（fail-closed，不開放 allow-all）。
+    unauthorized_dm_behavior: pair
     # 建議由環境變數 TELEGRAM_BOT_TOKEN 與 TELEGRAM_ALLOWED_USERS 注入，不在設定檔硬編碼秘密
 
 gateway:

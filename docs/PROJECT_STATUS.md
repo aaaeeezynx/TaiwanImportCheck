@@ -8,7 +8,8 @@
 ## 1. 目前結論
 
 - P0 的程式碼、權限控制、Mock SQLite 查詢與 Hermes plugin 整合已有自動測試；
-  2026-10-23 實跑 58 項測試全部通過。
+  2026-10-23 在 `tic-p0-hermes` 容器內實跑 65 項測試全部通過，包含實際
+  `PluginManager` 載入與工具分派整合測試。
 - 官方參考資料庫已建立 18 個來源的 schema 與版本管理，但這不等於資料已可
   正式使用。最新本機核驗結果是 14 PASS、3 REVIEW、0 FAIL、1 MISSING，
   0 import errors。
@@ -21,9 +22,10 @@
 - Telegram Bot 憑證已配置且 `getMe` 實測成功；目前 gateway 日誌已記錄
   `Connected to Telegram (polling mode)`、`telegram connected` 與 1 個平台
   已上線。2026-10-23 複查 `getMe` 與 `getWebhookInfo` 均成功，webhook 未設定、
-  pending updates 為 0 且無 API 回報錯誤；期間仍有 DNS 解析失敗與
-  `RemoteProtocolError` 重連紀錄。目前尚無 allowlist 帳號的真實訊息事件處理
-  證據，因此 Telegram live E2E 尚未完成。
+  pending updates 為 0 且無 API 回報錯誤。舊日誌曾有 DNS 解析失敗、
+  `RemoteProtocolError` 重連與一次 polling conflict；本次 Docker restart 後容器
+  為 healthy，gateway 與 Telegram polling 均已恢復。目前尚無 allowlist 帳號的
+  真實訊息事件處理證據，因此 Telegram live E2E 尚未完成。
 - Hermes 已設定 NVIDIA NIM 測試模型
   `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`，基本 one-shot 回覆已通過；
   CLI 工具呼叫也已實際進入 `p0_import_lookup`。先前 CLI 缺少 Telegram session
@@ -44,10 +46,12 @@ P0 只驗證以下鏈路：
 4. 工具回傳結構化結果與 `[P0測試假資料]` disclaimer。
 5. Hermes 將結果整理成適合 Telegram 的繁中回覆。
 
-allowlist 採 fail-closed：`TELEGRAM_ALLOWED_USERS` 或
-`ADMIN_TELEGRAM_USERS` 留空、使用者不在清單，或工具收到偽造的 `user_id`
-參數時，查詢或管理動作都會被拒絕。工具 schema 不暴露 `user_id`，由 Hermes
-session context 注入。
+授權採 fail-closed，來源為 `TELEGRAM_ALLOWED_USERS` /
+`ADMIN_TELEGRAM_USERS` 環境清單與 Hermes DM pairing 核准清單的聯集。使用者
+加入 Bot 不會自動取得權限；需由管理者執行 `hermes pairing approve telegram`
+人工核准。管理權只來自 `ADMIN_TELEGRAM_USERS`，pairing 不會升級為管理員。
+當 `HERMES_HOME` 已設定時，Pairing 只讀該 profile，不會回落其他 `.hermes`
+目錄。工具 schema 不暴露 `user_id`，身分由 Hermes session context 注入。
 
 P0 不包含案件管理、網站、多 Agent、正式申報、正式法規判斷或官方資料查詢。
 `not_found_in_mock` 只代表假資料沒有命中，不代表免稅、免驗、無輸入規定或可
@@ -269,27 +273,30 @@ Compose 設定檢查（不需要把秘密貼到命令列）：
 docker compose config --quiet
 ```
 
-Windows 本機 Hermes 與 Docker 的完整啟動步驟、allowlist 設定與 Telegram
-測試內容，請見 [`../P0_驗證說明.md`](../P0_驗證說明.md)。不要把 `.env`、
-Bot Token、模型 API key、真實 Telegram User ID 或資料庫提交到 Git。
+Windows 本機 Hermes 與 Docker 的完整啟動步驟、pairing／allowlist 設定與
+Telegram 測試內容，請見 [`../P0_驗證說明.md`](../P0_驗證說明.md)。不要把
+`.env`、Bot Token、模型 API key、真實 Telegram User ID 或資料庫提交到 Git。
 
-容器內可執行的 unittest（必須帶入 `PYTHONPATH`）：
+容器內的整合測試與唯讀原始碼編譯檢查：
 
 ```powershell
-docker exec -e PYTHONPATH=/opt/hermes -e P0_TEST_TEMP_ROOT=/tmp/tic-p0-tests tic-p0-hermes /opt/hermes/.venv/bin/python -m unittest discover -s tests -v
+docker exec -e PYTHONPATH=/opt/hermes -e HERMES_INSTALL_ROOT=/opt/hermes -e P0_TEST_TEMP_ROOT=/tmp/tic-p0-tests -e HERMES_HOME=/opt/data tic-p0-hermes /opt/hermes/.venv/bin/python -m unittest discover -s tests -v
+docker exec -e PYTHONPATH=/opt/hermes -e PYTHONPYCACHEPREFIX=/tmp/tic-p0-pycache tic-p0-hermes /opt/hermes/.venv/bin/python -m compileall -q tools scripts tests .hermes
 ```
 
 ## 9. 目前限制與下一步
 
-- Telegram 真實訊息 live E2E、圖片事件到 `image_path` 的實際傳遞、Telegram
-  網路連線的長時間穩定性，以及 Docker 重啟後的自動恢復行為尚未驗證。
+- Telegram 真實訊息 live E2E、pairing onboarding、圖片事件到 `image_path`
+  的實際傳遞與 Telegram 網路連線的長時間穩定性尚未驗證。單次 Docker
+  `restart` 後容器、gateway 與 Telegram polling 的自動恢復已驗證通過。
 - 本輪已通過 Docker 建置、容器啟動、gateway 與容器內 smoke test；Bot Token
   也通過 `getMe` 驗證。目前日誌已顯示 Telegram polling 連線；但尚無 allowlist
-  帳號的真實訊息事件，因此不能把 Telegram live E2E 或完整回覆鏈路標示為完成。
+  或 pairing 核准帳號的真實訊息事件；目前 pairing 清單為空，因此不能把
+  Telegram live E2E 或完整回覆鏈路標示為完成。
 - Telegram API 在 2026-10-23 複查時可用，`getWebhookInfo` 顯示 webhook 未設定、
-  pending updates 為 0、無 API 錯誤；但 gateway 日誌仍有 DNS 解析失敗與
-  `RemoteProtocolError` 重連，需持續觀察並排除 Docker DNS、IPv6 或網路路徑
-  問題。
+  pending updates 為 0、無 API 錯誤。舊日誌曾有 DNS 解析失敗、
+  `RemoteProtocolError` 重連與一次 polling conflict；本次 restart 後已恢復，
+  仍需持續觀察 Docker DNS、IPv6、網路路徑與長時間 polling 穩定性。
 - Compose 已加入 gateway process healthcheck，但這只確認 Hermes gateway
   程序可回應，不代表 Telegram polling 已連線，也不代表平台事件已成功送達。
 - NVIDIA NIM 測試模型基本回覆與 CLI plugin 呼叫已通過；先前曾遇到
@@ -302,13 +309,16 @@ docker exec -e PYTHONPATH=/opt/hermes -e P0_TEST_TEMP_ROOT=/tmp/tic-p0-tests tic
   診斷 `8876`；再補來源目錄、版本差異與人工覆核，完成後才評估讓正式資料庫
   進入查詢鏈。
 - 目前 live 阻塞的最小處理順序：
-  1. 由 allowlist 與非 allowlist 帳號送出真實私聊訊息，確認事件送達與拒絕
-     行為；gateway process 健康與 Telegram polling 狀態需分開檢查。
+  1. 由測試帳號私聊 Bot，使用 `hermes pairing list` 查看 `request_id`，再以
+     `hermes pairing approve telegram <request_id>` 核准；同時以未核准帳號
+     確認只會取得配對提示。gateway process 健康與 Telegram polling 狀態需
+     分開檢查。
   2. NVIDIA 模型基本回覆與 CLI 工具呼叫已通過；若再次遇到限流，等待冷卻或
      改用同供應商可用模型。接著確認 vision 能力，必要時暫以
      `image_description` 降級驗證。
   3. 由 allowlist 帳號完成文字、圖片、URL 三種 Telegram 實測，再檢查
      `image_path` 是否由圖片事件傳入。
-  4. 利用已加入的 gateway healthcheck 驗證容器重啟後能恢復，並另外觀察
-     Telegram polling 狀態。
+  4. 單次容器重啟與 Telegram polling 恢復已通過；後續持續利用 gateway
+     healthcheck 觀察長時間運作，並在真實訊息流程中確認 Telegram polling
+     狀態。
   5. 最後才進行 `92103`、`5996`、`7078` 的重複資料診斷與 `8876` 的補抓診斷。
