@@ -38,6 +38,16 @@ services:
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - /bin/sh
+        - -c
+        - HERMES_HOME=/opt/data /opt/hermes/.venv/bin/hermes gateway status >/dev/null 2>&1
+      interval: 30s
+      timeout: 15s
+      start_period: 90s
+      retries: 3
     # Windows bind contexts can preserve CRLF in Hermes' shell scripts.
     # Normalize only the running container before s6-overlay starts.
     entrypoint: ["/bin/sh", "/workspace/app/docker/normalize-s6-crlf.sh"]

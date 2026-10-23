@@ -232,7 +232,7 @@ def check_authorization(user_id: Optional[str], action: str = "lookup") -> Tuple
         return (
             False,
             "MISSING_USER_ID",
-            "缺少 Telegram user_id，無法通過白名單驗證（預設拒絕）。",
+            "目前無法取得授權身分，查詢未執行；請從已授權的 Telegram 私聊使用本服務。",
         )
 
     if uid not in allowed_users:

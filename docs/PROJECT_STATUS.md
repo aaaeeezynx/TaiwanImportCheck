@@ -8,9 +8,9 @@
 ## 1. 目前結論
 
 - P0 的程式碼、權限控制、Mock SQLite 查詢與 Hermes plugin 整合已有自動測試；
-  2026-10-23 實跑 53 項測試全部通過，Python 語法檢查通過。
+  2026-10-23 實跑 53 項測試全部通過。
 - 官方參考資料庫已建立 18 個來源的 schema 與版本管理，但這不等於資料已可
-  正式使用。最新本機核驗結果是 14 PASS、0 REVIEW、0 FAIL、4 MISSING，
+  正式使用。最新本機核驗結果是 14 PASS、3 REVIEW、1 FAIL、0 MISSING，
   0 import errors。
 - 目前有 14 個來源具備 active version；`92103`、`5996`、`7078` 已有候選快照，
   但核驗均為 `REVIEW`；`8876` 尚無候選快照。這 4 個來源都沒有可啟用版本。
@@ -18,12 +18,15 @@
 - Docker Client/Server 29.6.1 與 Compose v5.2.0 可用。2026-10-23 本輪已
   實際重建並啟動 `tic-p0-hermes`，s6 初始化與 gateway 均正常；容器內 smoke
   test 通過 plugin、SQLite、文字／圖片／URL 輸入與 allowlist 驗證。
-- Telegram Bot 憑證已配置且 `getMe` 實測成功；歷史 gateway 日誌曾記錄
+- Telegram Bot 憑證已配置且 `getMe` 實測成功；目前 gateway 日誌已記錄
   `Connected to Telegram (polling mode)`、`telegram connected` 與 1 個平台
-  已上線，但最新行程仍在連線嘗試，尚未確認本輪連線，且尚無 allowlist 帳號
-  的真實訊息事件處理證據，因此 Telegram live E2E 尚未完成。
-- Hermes 的 `OPENAI_API_KEY` 目前仍是 placeholder；即使 Telegram 事件成功
-  送達，Hermes 也無法可靠產生最終模型回覆。這是 live E2E 的另一個明確阻塞。
+  已上線。目前尚無 allowlist 帳號的真實訊息事件處理證據，因此 Telegram
+  live E2E 尚未完成。
+- Hermes 已設定 NVIDIA NIM 測試模型
+  `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`，基本 one-shot 回覆已通過；
+  CLI 工具呼叫也已實際進入 `p0_import_lookup`。先前 CLI 缺少 Telegram session
+  身分時，模型曾誤要求使用者提供 ID；該錯誤訊息與 Agent 規則已修正，回歸測試
+  確認現在只回覆無法取得授權身分。真實 Telegram 回覆鏈路仍未驗證。
 - 專案已初始化 Git 並設定
   `https://github.com/aaaeeezynx/TaiwanImportCheck.git` 為 origin；資料庫、快照、
   報告、Hermes home 與 `.env` 不納入版本控制。
@@ -68,17 +71,17 @@ P0 不包含案件管理、網站、多 Agent、正式申報、正式法規判�
 
 最新本機核驗報告位於
 `data/official_data/reports/official_source_validation.json`，結果為
-14 PASS、0 REVIEW、0 FAIL、4 MISSING；更新報告
+14 PASS、3 REVIEW、1 FAIL、0 MISSING；更新報告
 `data/official_data/reports/official_data_update.json` 顯示 14 個 active version、
 0 個新版本與 0 個匯入錯誤。
 
 | Dataset | SQLite 資料表 | 最新狀態 | Active version |
 |---|---|---:|---:|
 | 80871 | `tariff_rates` | PASS | 有 |
-| 92103 | `commodity_rules` | MISSING | 無 |
+| 92103 | `commodity_rules` | REVIEW | 無 |
 | 16519 | `import_requirement_codes` | PASS | 有 |
 | 30171 | `requirement_authorities` | PASS | 有 |
-| 5996 | `telecom_certified_devices` | MISSING | 無 |
+| 5996 | `telecom_certified_devices` | REVIEW | 無 |
 | 171493 | `telecom_radio_equipment` | PASS | 有 |
 | 9639 | `food_regulations` | PASS | 有 |
 | 9047 | `registered_food_products` | PASS | 有 |
@@ -86,16 +89,15 @@ P0 不包含案件管理、網站、多 Agent、正式申報、正式法規判�
 | 9116 | `drug_ccc_mappings` | PASS | 有 |
 | 9122 | `drug_licenses` | PASS | 有 |
 | 9576 | `medical_device_licenses` | PASS | 有 |
-| 7078 | `bsmi_required_inspections` | MISSING | 無 |
+| 7078 | `bsmi_required_inspections` | REVIEW | 無 |
 | 9714 | `bsmi_surveillance_items` | PASS | 有 |
-| 8876 | `bsmi_batch_inspection_items` | MISSING | 無 |
+| 8876 | `bsmi_batch_inspection_items` | FAIL | 無 |
 | 9640 | `food_additive_standards` | PASS | 有 |
 | 6713 | `tariff_advance_rulings` | PASS | 有 |
 | 18289 | `taiwan_laws` | PASS | 有 |
 
-表中的 `MISSING` 是穩定報告對 `source_snapshots/` 的結果，代表目前沒有可啟用
-快照，不等於 `candidate_snapshots/` 沒有檔案。2026-10-23 另行直接核驗候選檔，
-結果如下：
+表中沒有 active version 的來源，代表目前沒有可啟用快照，不等於
+`candidate_snapshots/` 沒有檔案。2026-10-23 另行直接核驗候選檔，結果如下：
 
 | Dataset | 候選檔 | 候選核驗 | 筆數 | 重複情況 |
 |---|---|---:|---:|---|
@@ -156,10 +158,10 @@ P0 不包含案件管理、網站、多 Agent、正式申報、正式法規判�
 
 ### 5.4 `8876` BSMI 候選快照缺失
 
-`8876` 目前沒有 `candidate_snapshots/` 檔案。先前下載曾出現 Windows curl
-`SEC_E_UNTRUSTED_ROOT`，但目前沒有足夠證據斷定本次缺檔就是 TLS 憑證問題；
-應保留失敗日誌與下載證據再判斷。不得使用 `-k`、關閉憑證驗證、忽略憑證鏈或
-把 HTTP 降級當成解法。
+`8876` 目前沒有 `candidate_snapshots/` 檔案。下載曾出現 Windows curl
+`SEC_E_UNTRUSTED_ROOT`，但沒有足夠證據斷定所有失敗都來自 TLS 憑證；應保留
+失敗日誌與下載證據再判斷。不得使用 `-k`、關閉憑證驗證、忽略憑證鏈或把 HTTP
+降級當成解法。
 
 處理步驟：
 
@@ -191,10 +193,10 @@ P0 不包含案件管理、網站、多 Agent、正式申報、正式法規判�
 ## 6. 更新頻率與自動核驗
 
 Windows 排程名稱為 `TaiwanImportCheck Official Data Weekly Update`，已建立、
-啟用並設定為每週日 03:00（本機時區）檢查 18 個來源。截至 2026-10-23，
-`LastRunTime` 仍為空，表示尚未有首次由 Task Scheduler 執行的紀錄；現有報告
-來自本輪手動更新。最新本機更新有 4 個 MISSING，因此程序回傳非零結果，
-不能把所有來源描述成更新成功。
+啟用並設定為每週日 03:00（本機時區）檢查 18 個來源。2026-10-23 曾手動觸發
+排程，`LastRunTime` 已有紀錄，`LastTaskResult` 為 `1`，下次執行時間為
+2026-10-25 03:00。結果碼 `1` 不是程式崩潰，而是更新器在仍有 REVIEW／FAIL
+來源時刻意回傳非零；報告已產生，但不可把所有來源描述成更新成功。
 
 低維護成本建議：
 
@@ -276,10 +278,13 @@ docker exec -e PYTHONPATH=/opt/hermes -e P0_TEST_TEMP_ROOT=/tmp/tic-p0-tests tic
 - Telegram 真實訊息 live E2E、圖片事件到 `image_path` 的實際傳遞，以及
   Docker 重啟後的自動恢復行為尚未驗證。
 - 本輪已通過 Docker 建置、容器啟動、gateway 與容器內 smoke test；Bot Token
-  也通過 `getMe` 驗證。歷史日誌曾顯示 Telegram polling 連線，但最新行程尚未
-  確認本輪連線；且尚無 allowlist 帳號的真實訊息事件，模型 API key 仍是
-  placeholder，因此不能把 Telegram live E2E 或完整回覆鏈路標示為完成。
-  Compose 未定義 Docker healthcheck，`health=n/a` 不代表健康檢查通過。
+  也通過 `getMe` 驗證。目前日誌已顯示 Telegram polling 連線；但尚無 allowlist
+  帳號的真實訊息事件，因此不能把 Telegram live E2E 或完整回覆鏈路標示為完成。
+- Compose 已加入 gateway process healthcheck，但這只確認 Hermes gateway
+  程序可回應，不代表 Telegram polling 已連線，也不代表平台事件已成功送達。
+- NVIDIA NIM 測試模型基本回覆與 CLI plugin 呼叫已通過；先前曾遇到
+  `ResourceExhausted: Worker local total request limit reached (64/16)`，
+  這是暫時性的供應商限流，不代表模型能力已完整驗證。
 - 18 個來源仍有 4 個沒有 active version：`92103`、`5996`、`7078` 的候選快照
   核驗為 `REVIEW`，`8876` 尚無候選快照。
 - 正式資料庫尚未接入 Hermes，這是刻意的隔離，不是漏接。
@@ -287,11 +292,13 @@ docker exec -e PYTHONPATH=/opt/hermes -e P0_TEST_TEMP_ROOT=/tmp/tic-p0-tests tic
   診斷 `8876`；再補來源目錄、版本差異與人工覆核，完成後才評估讓正式資料庫
   進入查詢鏈。
 - 目前 live 阻塞的最小處理順序：
-  1. 先確認最新 gateway 行程已進入 Telegram polling；再由 allowlist 與非
-     allowlist 帳號送出真實私聊訊息，確認事件送達與拒絕行為。
-  2. 將 placeholder 的 `OPENAI_API_KEY` 換成有效測試憑證，並確認所選模型
-     可用。
+  1. 由 allowlist 與非 allowlist 帳號送出真實私聊訊息，確認事件送達與拒絕
+     行為；gateway process 健康與 Telegram polling 狀態需分開檢查。
+  2. NVIDIA 模型基本回覆與 CLI 工具呼叫已通過；若再次遇到限流，等待冷卻或
+     改用同供應商可用模型。接著確認 vision 能力，必要時暫以
+     `image_description` 降級驗證。
   3. 由 allowlist 帳號完成文字、圖片、URL 三種 Telegram 實測，再檢查
      `image_path` 是否由圖片事件傳入。
-  4. 補上 Docker healthcheck，驗證容器重啟後 gateway 能自動恢復。
+  4. 利用已加入的 gateway healthcheck 驗證容器重啟後能恢復，並另外觀察
+     Telegram polling 狀態。
   5. 最後才進行 `92103`、`5996`、`7078` 的重複資料診斷與 `8876` 的補抓診斷。

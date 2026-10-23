@@ -7,7 +7,9 @@
 _config_version: 33
 
 model:
-  default: gpt-4o-mini
+  provider: nvidia
+  default: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
+  supports_vision: true
 
 plugins:
   enabled:

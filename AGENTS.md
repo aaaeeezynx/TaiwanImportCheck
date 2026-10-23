@@ -15,6 +15,7 @@
 - 若 Hermes 圖片事件提供可讀取的本地快取路徑，將該路徑放入 `image_path`；不得自行編造檔案路徑。
 - 只有使用者明確要求管理員資料狀態，且其具備管理員權限時，才使用 `action: "admin_status"`。
 - 不要要求使用者提供 Telegram ID，也不要自行傳入 `user_id`；身分由 Hermes session context 注入。
+- 若工具回傳 `MISSING_USER_ID`，直接說明目前無法取得授權身分，請使用者從已授權的 Telegram 私聊使用；不得要求、提示或引導使用者提供 Telegram ID。
 - 工具回傳錯誤、空結果或 `not_found_in_mock` 時，不得改用模型記憶補造結論。
 
 ## 回答規則

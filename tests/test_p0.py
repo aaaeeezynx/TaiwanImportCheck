@@ -107,6 +107,8 @@ class P0LookupTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "unauthorized")
         self.assertEqual(result["error"]["code"], "MISSING_USER_ID")
+        self.assertNotIn("user_id", result["error"]["message"].lower())
+        self.assertNotIn("Telegram ID", result["error"]["message"])
 
     def test_unauthorized_user_is_rejected_without_echoing_user_id(self) -> None:
         result = core.run_p0_lookup(user_id=UNAUTHORIZED_USER, query="藍牙耳機")
