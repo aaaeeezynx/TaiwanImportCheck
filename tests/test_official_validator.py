@@ -1,3 +1,4 @@
+import csv
 import hashlib
 import io
 import json
@@ -309,6 +310,115 @@ class OfficialSnapshotValidatorTests(unittest.TestCase):
         ).encode("utf-8")
         result = validate_payload(payload, source)
         self.assertEqual(result["status"], "PASS")
+
+    def test_manifest_fixtures_produce_14_pass_3_review_1_missing(self):
+        from tools.official_database import load_sources
+
+        sources = load_sources()
+        review_ids = {"16519", "30171", "171493"}
+        missing_id = "5996"
+        pass_ids = {
+            str(source["id"])
+            for source in sources
+            if str(source["id"]) not in review_ids | {missing_id}
+        }
+        self.assertEqual(len(sources), 18)
+        self.assertEqual(len(pass_ids), 14)
+
+        def fixture_payload(source):
+            fields = list(source["fields"])
+            ccc_fields = set(source.get("ccc_fields", []))
+            special_values = {
+                "法規名稱": "測試法規",
+                "法規網址": "https://law.moj.gov.tw/LawClass/LawAll.aspx?pcode=X0000001",
+                "最新異動日期": "2026-01-02",
+                "生效日期": "2026-01-03",
+            }
+            row = {
+                field: (
+                    "01012100003"
+                    if field in ccc_fields
+                    else special_values.get(field, f"tests-{source['id']}-{field}")
+                )
+                for field in fields
+            }
+            output = io.StringIO(newline="")
+            writer = csv.DictWriter(output, fieldnames=fields)
+            writer.writeheader()
+            writer.writerow(row)
+            if str(source["id"]) in review_ids:
+                writer.writerow(row)
+            return output.getvalue().encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "source_snapshots"
+            candidate_dir = root / "candidate_snapshots"
+            report_dir = root / "reports"
+            source_dir.mkdir()
+            fixture_bytes = {}
+            for source in sources:
+                dataset_id = str(source["id"])
+                if dataset_id == missing_id:
+                    continue
+                payload = fixture_payload(source)
+                fixture_bytes[dataset_id] = payload
+                (source_dir / f"{dataset_id}.csv").write_bytes(payload)
+
+            evidence = {}
+            with mock.patch(
+                "scripts.validate_official_snapshot._load_sources",
+                return_value=sources,
+            ):
+                report = run(
+                    False,
+                    source_dir,
+                    report_dir,
+                    candidate_dir,
+                    evidence=evidence,
+                )
+
+        self.assertEqual(
+            report["summary"],
+            {"total": 18, "pass": 14, "review": 3, "fail": 0, "missing": 1},
+        )
+        results = {str(item["id"]): item for item in report["results"]}
+        self.assertEqual(
+            {
+                dataset_id
+                for dataset_id, item in results.items()
+                if item["status"] == "PASS"
+            },
+            pass_ids,
+        )
+        self.assertEqual(
+            {
+                dataset_id
+                for dataset_id, item in results.items()
+                if item["status"] == "REVIEW"
+            },
+            review_ids,
+        )
+        self.assertEqual(results[missing_id]["status"], "MISSING")
+        self.assertNotIn(missing_id, evidence)
+
+        sources_by_id = {str(source["id"]): source for source in sources}
+        for dataset_id, payload in fixture_bytes.items():
+            with self.subTest(dataset_id=dataset_id):
+                item = results[dataset_id]
+                self.assertEqual(evidence[dataset_id], payload)
+                self.assertEqual(item["dataset_id"], dataset_id)
+                self.assertEqual(item["snapshot_origin"], "source_snapshot")
+                self.assertEqual(
+                    item["validation_rules"],
+                    sources_by_id[dataset_id]["validation_rules"],
+                )
+                self.assertTrue(item["validated_at"])
+                self.assertEqual(
+                    item["sha256"],
+                    hashlib.sha256(payload).hexdigest(),
+                )
+                self.assertEqual(item["size_bytes"], len(payload))
 
 
 if __name__ == "__main__":

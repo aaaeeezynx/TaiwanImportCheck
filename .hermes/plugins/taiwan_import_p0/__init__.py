@@ -18,6 +18,11 @@ ALLOWED_ARGUMENTS = {
     "action",
 }
 ALLOWED_ACTIONS = {"lookup", "admin_status"}
+P0_DISCLAIMER = (
+    "[P0測試假資料] 本結果來自本地測試用假資料庫（Mock SQLite），"
+    "所有 CCC Code、稅率、輸入規定與檢驗狀態皆為技術驗證用虛構測試值，"
+    "不構成正式報關、稅則歸列或法規免驗建議。"
+)
 _core_module: Any = None
 
 
@@ -37,10 +42,18 @@ def _load_core() -> Any:
 
 
 def _json_error(code: str, message: str) -> str:
+    unauthorized_codes = {
+        "MISSING_USER_ID",
+        "UNAUTHORIZED_USER",
+        "UNAUTHORIZED_ADMIN",
+        "ALLOWLIST_NOT_CONFIGURED",
+    }
+    status = "unauthorized" if code in unauthorized_codes else "error"
     return json.dumps(
         {
-            "status": "error",
+            "status": status,
             "is_mock_data": True,
+            "disclaimer": P0_DISCLAIMER,
             "error": {"code": code, "message": message},
         },
         ensure_ascii=False,
@@ -56,6 +69,27 @@ def _optional_string(params: dict[str, Any], key: str) -> str | None:
     return value
 
 
+def _session_value(key: str) -> str:
+    try:
+        from gateway.session_context import get_session_env
+
+        value = get_session_env(key, "")
+    except Exception:
+        return ""
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _session_user_id() -> str:
+    """Read a private Telegram identity injected by the Hermes gateway."""
+    if _session_value("HERMES_SESSION_PLATFORM").lower() != "telegram":
+        return ""
+    # Hermes normalizes Telegram private chats to "dm"; older adapters used
+    # "private". Accept only those two direct-message forms.
+    if _session_value("HERMES_SESSION_CHAT_TYPE").lower() not in {"dm", "private"}:
+        return ""
+    return _session_value("HERMES_SESSION_USER_ID")
+
+
 def _handle_p0_import_lookup(params: dict[str, Any], **kwargs: Any) -> str:
     """Run an authorized lookup using identity from the Hermes session context."""
     del kwargs
@@ -65,20 +99,32 @@ def _handle_p0_import_lookup(params: dict[str, Any], **kwargs: Any) -> str:
         return _json_error("INVALID_ARGUMENTS", "工具參數含不允許的欄位。")
 
     try:
-        from gateway.session_context import get_session_env
-
-        user_id = get_session_env("HERMES_SESSION_USER_ID", "")
         action = _optional_string(params, "action") or "lookup"
         action = action.strip().lower()
-        if action not in ALLOWED_ACTIONS:
-            return _json_error("INVALID_ACTION", "不支援的工具動作。")
+        query = _optional_string(params, "query")
+        product_url = _optional_string(params, "product_url")
+        image_path = _optional_string(params, "image_path")
+        image_description = _optional_string(params, "image_description")
+    except ValueError:
+        return _json_error("INVALID_ARGUMENTS", "工具參數格式不正確。")
 
+    if action not in ALLOWED_ACTIONS:
+        return _json_error("INVALID_ACTION", "不支援的工具動作。")
+
+    user_id = _session_user_id()
+    if not user_id:
+        return _json_error(
+            "MISSING_USER_ID",
+            "目前無法取得授權身分，查詢未執行；請從已授權的 Telegram 私聊使用本服務。",
+        )
+
+    try:
         result = _load_core().run_p0_lookup(
             user_id=user_id,
-            query=_optional_string(params, "query"),
-            product_url=_optional_string(params, "product_url"),
-            image_path=_optional_string(params, "image_path"),
-            image_description=_optional_string(params, "image_description"),
+            query=query,
+            product_url=product_url,
+            image_path=image_path,
+            image_description=image_description,
             action=action,
         )
         return json.dumps(result, ensure_ascii=False)

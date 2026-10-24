@@ -28,23 +28,6 @@ from tools.official_database import (
 )
 
 
-def _validated_snapshot_path(result: dict, source_dir: Path) -> Path:
-    """Resolve the validator's selected file without trusting its extension."""
-    raw_path = result.get("file")
-    if not raw_path:
-        raise ValueError("PASS result does not identify a validated snapshot file")
-    try:
-        snapshot = Path(raw_path).resolve(strict=True)
-    except OSError as exc:
-        raise ValueError("validated snapshot file is unavailable") from exc
-    root = Path(source_dir).resolve()
-    if snapshot != root and root not in snapshot.parents:
-        raise ValueError("validated snapshot file is outside the source snapshot directory")
-    if not snapshot.is_file():
-        raise ValueError("validated snapshot path is not a regular file")
-    return snapshot
-
-
 def run_update(
     download: bool,
     db_path: Path = DEFAULT_DB_PATH,
@@ -55,11 +38,13 @@ def run_update(
 ) -> dict:
     sources_list = load_sources()
     initialize_database(db_path, sources_list)
+    evidence: dict[str, bytes] = {}
     report = run(
         download=download,
         source_dir=source_dir,
         candidate_dir=candidate_dir,
         report_dir=report_dir,
+        evidence=evidence,
     )
     sources = {str(source["id"]): source for source in sources_list}
     updates = []
@@ -92,11 +77,15 @@ def run_update(
                 raise ValueError("PASS result does not identify a source snapshot")
             if dataset_id not in sources:
                 raise ValueError(f"PASS result has unknown dataset id {dataset_id}")
-            snapshot = _validated_snapshot_path(result, source_dir)
+            raw = evidence.get(dataset_id)
+            if not isinstance(raw, bytes):
+                raise ValueError(
+                    "validator did not preserve the exact bytes for this snapshot"
+                )
             imported = import_validated_snapshot(
                 db_path,
                 sources[dataset_id],
-                snapshot.read_bytes(),
+                raw,
                 result,
                 source_url=result.get("source_url"),
                 metadata_modified=result.get("metadata_modified"),

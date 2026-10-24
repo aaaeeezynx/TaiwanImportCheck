@@ -6,8 +6,10 @@ import csv
 import hashlib
 import io
 import json
+import os
 import re
 import sqlite3
+import stat
 import zipfile
 from contextlib import closing
 from datetime import date, datetime, timezone
@@ -16,6 +18,7 @@ from typing import Any
 from xml.etree import ElementTree
 
 from scripts.validate_official_snapshot import (
+    MAX_DOWNLOAD_BYTES,
     _check_gov_url,
     _decode_text,
     _expected_match_count,
@@ -75,7 +78,10 @@ VALIDATION_STATUSES = frozenset({
     "MISSING",
     "IMPORT_FAIL",
 })
-FAILURE_STATUSES = frozenset({"FAIL", "IMPORT_FAIL"})
+REGISTRY_STATUSES = VALIDATION_STATUSES | {"ROLLBACK"}
+REPARSE_POINT_ATTRIBUTE = getattr(
+    stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400
+)
 REGISTRY_METADATA_COLUMNS = {
     "active_sha256": "TEXT",
     "authority": "TEXT",
@@ -92,6 +98,7 @@ REGISTRY_METADATA_COLUMNS = {
     "metadata_modified": "TEXT",
 }
 VERSION_METADATA_COLUMNS = {
+    "content_digest": "TEXT",
     "authority": "TEXT",
     "official_dataset_url": "TEXT",
     "format": "TEXT",
@@ -326,14 +333,20 @@ def _consistent_active_version(
     connection: sqlite3.Connection,
     registry: sqlite3.Row,
     source: dict[str, Any],
+    *,
+    require_active_sha: bool = False,
 ) -> sqlite3.Row | None:
-    """Return the active version only when all pointer and row-count checks pass."""
+    """Return the active version only when its complete contents are consistent."""
     active_version_id = registry["active_version_id"]
     if not active_version_id:
         return None
 
+    selected = ", ".join(
+        _quote(column)
+        for column in (*_version_digest_columns(), "content_digest")
+    )
     version = connection.execute(
-        """SELECT version_id, dataset_id, sha256, record_count, validation_status
+        f"""SELECT {selected}
            FROM official_dataset_versions
            WHERE version_id = ? AND dataset_id = ?""",
         (active_version_id, registry["dataset_id"]),
@@ -342,23 +355,42 @@ def _consistent_active_version(
         return None
     if version["version_id"] != f"{registry['dataset_id']}:{version['sha256']}":
         return None
+    if registry["active_sha256"] != version["sha256"]:
+        return None
+    if not isinstance(version["record_count"], int) or isinstance(
+        version["record_count"], bool
+    ):
+        return None
 
     table = _quote(str(source["table"]))
     view_name = _quote("active_" + str(source["table"]))
-    view_exists = connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'view' AND name = ?",
+    view = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = ?",
         (f"active_{source['table']}",),
     ).fetchone()
-    if not view_exists:
+    if not view or view["sql"] != _active_view_sql(source):
         return None
-    source_count = connection.execute(
-        f"SELECT COUNT(*) FROM {table} WHERE source_version_id = ?",
+    view_columns = tuple(
+        str(row["name"]) for row in connection.execute(f"PRAGMA table_info({view_name})")
+    )
+    expected_columns = tuple(
+        ["record_id", "source_version_id", "source_row_number", *source["fields"]]
+    )
+    if view_columns != expected_columns:
+        return None
+
+    rows = connection.execute(
+        f"""SELECT {", ".join(_quote(column) for column in expected_columns[1:])}
+            FROM {table}
+            WHERE source_version_id = ?
+            ORDER BY source_row_number""",
         (active_version_id,),
-    ).fetchone()[0]
-    view_count = connection.execute(f"SELECT COUNT(*) FROM {view_name}").fetchone()[0]
-    if not (
-        source_count == version["record_count"]
-        and view_count == version["record_count"]
+    ).fetchall()
+    row_values = [list(row) for row in rows]
+    if (
+        len(row_values) != version["record_count"]
+        or any(row[1] != index for index, row in enumerate(row_values, start=1))
+        or version["content_digest"] != _content_digest(source, version, row_values)
     ):
         return None
     return version
@@ -368,12 +400,49 @@ def _migrate_existing_metadata(
     connection: sqlite3.Connection,
     sources: list[dict[str, Any]],
 ) -> None:
-    """Backfill only NULL metadata and leave active pointers and statuses untouched."""
-    metadata_fields = tuple(VERSION_METADATA_COLUMNS)
+    """Backfill descriptive metadata after verifying all stored integrity data."""
+    metadata_fields = tuple(
+        field for field in VERSION_METADATA_COLUMNS if field != "content_digest"
+    )
     version_assignments = ", ".join(
         f"{_quote(field)} = COALESCE({_quote(field)}, ?)"
         for field in metadata_fields
     )
+    versions = connection.execute(
+        f"""SELECT {", ".join(
+            _quote(column)
+            for column in (*_version_digest_columns(), "content_digest")
+        )}
+            FROM official_dataset_versions
+            ORDER BY dataset_id, version_id"""
+    ).fetchall()
+    sources_by_id = {str(source["id"]): source for source in sources}
+    for version in versions:
+        source = sources_by_id.get(str(version["dataset_id"]))
+        if source is None:
+            raise ValueError(
+                "official database contains a version for an unknown dataset"
+            )
+        if version["content_digest"] is None:
+            continue
+        rows = connection.execute(
+            f"""SELECT source_version_id, source_row_number,
+                       {", ".join(_quote(field) for field in source["fields"])}
+                FROM {_quote(source["table"])}
+                WHERE source_version_id = ?
+                ORDER BY source_row_number""",
+            (version["version_id"],),
+        ).fetchall()
+        values = [list(row) for row in rows]
+        if (
+            len(values) != version["record_count"]
+            or any(row[1] != index for index, row in enumerate(values, start=1))
+            or version["content_digest"] != _content_digest(source, version, values)
+        ):
+            raise ValueError(
+                f"stored content digest is inconsistent for {version['version_id']}"
+            )
+
     for source in sources:
         metadata = _source_metadata(source)
         connection.execute(
@@ -383,7 +452,6 @@ def _migrate_existing_metadata(
             (*(metadata[field] for field in metadata_fields), str(source["id"])),
         )
 
-    sources_by_id = {str(source["id"]): source for source in sources}
     registry_rows = connection.execute(
         """SELECT dataset_id, source_table, active_version_id, active_sha256,
                   metadata_modified
@@ -397,13 +465,6 @@ def _migrate_existing_metadata(
         version = _consistent_active_version(connection, registry, source)
         if version is None:
             continue
-        if registry["active_sha256"] is None:
-            connection.execute(
-                """UPDATE official_dataset_registry
-                   SET active_sha256 = ?
-                   WHERE dataset_id = ? AND active_sha256 IS NULL""",
-                (version["sha256"], registry["dataset_id"]),
-            )
         if registry["metadata_modified"] is None:
             connection.execute(
                 """UPDATE official_dataset_registry
@@ -417,8 +478,133 @@ def _migrate_existing_metadata(
             )
 
 
-def _parse_timestamp(value: str | None) -> datetime | None:
-    if not value:
+def _version_digest_columns() -> tuple[str, ...]:
+    return (
+        "version_id",
+        "dataset_id",
+        "sha256",
+        "source_url",
+        "metadata_modified",
+        "update_frequency",
+        "fetched_at",
+        "validated_at",
+        "record_count",
+        "validation_status",
+        *(
+            field
+            for field in VERSION_METADATA_COLUMNS
+            if field != "content_digest"
+        ),
+    )
+
+
+def _active_view_sql(source: dict[str, Any]) -> str:
+    dataset_id = str(source["id"]).replace("'", "''")
+    table = _quote(str(source["table"]))
+    view = _quote("active_" + str(source["table"]))
+    columns = ["record_id", "source_version_id", "source_row_number", *source["fields"]]
+    selected = ", ".join(f"d.{_quote(column)}" for column in columns)
+    return (
+        f"CREATE VIEW {view} AS\n"
+        f"                    SELECT {selected}\n"
+        f"                    FROM {table} AS d\n"
+        "                    JOIN official_dataset_registry AS r\n"
+        f"                     ON r.dataset_id = '{dataset_id}'\n"
+        "                     AND r.active_version_id = d.source_version_id"
+    )
+
+
+def _content_digest(
+    source: dict[str, Any],
+    version: sqlite3.Row | dict[str, Any],
+    rows: list[list[Any]],
+) -> str:
+    """Hash complete version metadata plus ordered source rows."""
+    canonical = {
+        "schema_version": 3,
+        "dataset_id": str(source["id"]),
+        "fields": list(source["fields"]),
+        "version": {
+            column: version[column]
+            for column in _version_digest_columns()
+        },
+        "rows": rows,
+    }
+    payload = json.dumps(
+        canonical,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _backfill_legacy_content_digest(
+    connection: sqlite3.Connection,
+    registry: sqlite3.Row,
+    source: dict[str, Any],
+    existing: sqlite3.Row,
+    records: list[dict[str, Any]],
+    sha256: str,
+) -> sqlite3.Row | None:
+    """Backfill a legacy digest only after proving the active rows are intact."""
+    if existing["content_digest"] is not None:
+        return None
+    if (
+        existing["validation_status"] != "PASS"
+        or existing["dataset_id"] != registry["dataset_id"]
+        or existing["sha256"] != sha256
+        or registry["active_version_id"] != existing["version_id"]
+        or registry["active_sha256"] != sha256
+    ):
+        return None
+
+    fields = source["fields"]
+    expected_rows = [
+        [existing["version_id"], index, *(_as_text(row.get(field)) for field in fields)]
+        for index, row in enumerate(records, start=1)
+    ]
+    stored_rows = connection.execute(
+        f"""SELECT source_version_id, source_row_number,
+                   {", ".join(_quote(field) for field in fields)}
+            FROM {_quote(source['table'])}
+            WHERE source_version_id = ?
+            ORDER BY source_row_number""",
+        (existing["version_id"],),
+    ).fetchall()
+    stored_values = [list(row) for row in stored_rows]
+    if (
+        stored_values != expected_rows
+        or existing["record_count"] != len(expected_rows)
+        or existing["version_id"] != f"{source['id']}:{sha256}"
+    ):
+        return None
+
+    digest = _content_digest(source, existing, expected_rows)
+    cursor = connection.execute(
+        """UPDATE official_dataset_versions
+           SET content_digest = ?
+           WHERE version_id = ? AND content_digest IS NULL""",
+        (digest, existing["version_id"]),
+    )
+    if cursor.rowcount != 1:
+        return None
+    return connection.execute(
+        """SELECT version_id, dataset_id, sha256, source_url,
+                  metadata_modified, update_frequency, fetched_at,
+                  validated_at, record_count, validation_status,
+                  content_digest, authority, official_dataset_url, format,
+                  content_type, license_code, license_name, license_url,
+                  declared_update_frequency, effective_from, effective_to,
+                  validation_rules
+           FROM official_dataset_versions
+           WHERE version_id = ?""",
+        (existing["version_id"],),
+    ).fetchone()
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
         return None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -433,26 +619,270 @@ def _older_pass_is_safe_to_apply(
     last_status: str | None,
     last_check_at: str | None,
     validated_at: str,
+    *,
+    has_active_version: bool = False,
 ) -> bool:
-    if last_status not in FAILURE_STATUSES or not last_check_at:
+    if has_active_version:
+        return False
+    if last_status is None and last_check_at is None:
         return True
+    if not last_status or not last_check_at:
+        return False
+    if last_status not in REGISTRY_STATUSES:
+        return False
     last_check = _parse_timestamp(last_check_at)
     candidate = _parse_timestamp(validated_at)
     if last_check is None or candidate is None:
         return False
-    return candidate >= last_check
+    return candidate > last_check
+
+
+def _is_link_or_reparse(info: os.stat_result) -> bool:
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0) & REPARSE_POINT_ATTRIBUTE
+    )
+
+
+def _file_identity(path: Path | str) -> tuple[int, int] | None:
+    """Return the current file identity without following a final symlink."""
+    try:
+        info = os.stat(path, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    if _is_link_or_reparse(info):
+        return None
+    return info.st_dev, info.st_ino
+
+
+def _assert_distinct_file_identity(
+    official_path: Path | str,
+    mock_path: Path | str | None = None,
+) -> None:
+    """Reject path, symlink, junction, and hardlink aliases of the mock DB."""
+    official = Path(official_path)
+    reference = Path(mock_path if mock_path is not None else MOCK_DB_PATH)
+    official_resolved = official.resolve(strict=False)
+    reference_resolved = reference.resolve(strict=False)
+    if os.path.normcase(str(official_resolved)) == os.path.normcase(
+        str(reference_resolved)
+    ):
+        raise ValueError(
+            "official reference database must not use the P0 mock database path"
+        )
+
+    try:
+        official_info = os.lstat(official)
+    except FileNotFoundError:
+        return
+    if _is_link_or_reparse(official_info):
+        raise ValueError("official reference database must not be a link or junction")
+    if not stat.S_ISREG(official_info.st_mode):
+        raise ValueError("official reference database path must be a regular file")
+
+    official_identity = _file_identity(official)
+    mock_identity = _file_identity(reference)
+    if official_identity is not None and official_identity == mock_identity:
+        raise ValueError(
+            "official reference database must not share a file with the P0 mock database"
+        )
+
+
+def _read_snapshot_file(
+    path: Path | str,
+    *,
+    root: Path | str,
+    max_bytes: int = MAX_DOWNLOAD_BYTES,
+) -> bytes:
+    """Read one regular snapshot exactly once while bounding path and size."""
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        raise ValueError("snapshot path must be absolute")
+    try:
+        root_path = Path(root)
+        root_before = os.lstat(root_path)
+        approved_root = root_path.resolve(strict=True)
+        before = os.lstat(candidate)
+    except OSError as exc:
+        raise ValueError("snapshot file or approved source directory is unavailable") from exc
+    if (
+        _is_link_or_reparse(root_before)
+        or not stat.S_ISDIR(root_before.st_mode)
+        or _is_link_or_reparse(before)
+        or not stat.S_ISREG(before.st_mode)
+        or before.st_nlink != 1
+    ):
+        raise ValueError("snapshot path must be a regular file")
+    try:
+        if not os.path.samefile(root_path, approved_root):
+            raise ValueError("approved source directory changed while being resolved")
+    except OSError as exc:
+        raise ValueError("approved source directory is unavailable") from exc
+
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("snapshot file is unavailable") from exc
+    if resolved != approved_root and approved_root not in resolved.parents:
+        raise ValueError("snapshot file is outside the approved source directory")
+
+    try:
+        canonical = os.lstat(resolved)
+    except OSError as exc:
+        raise ValueError("snapshot file is unavailable") from exc
+    if (
+        _is_link_or_reparse(canonical)
+        or not stat.S_ISREG(canonical.st_mode)
+        or canonical.st_nlink != 1
+    ):
+        raise ValueError("snapshot path must be a regular file")
+    if (canonical.st_dev, canonical.st_ino) != (before.st_dev, before.st_ino):
+        raise ValueError("snapshot file changed while being resolved")
+    before = canonical
+    if before.st_size > max_bytes:
+        raise ValueError("snapshot exceeds configured size limit")
+
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(resolved, flags)
+    except OSError as exc:
+        raise ValueError("snapshot file could not be opened safely") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            _is_link_or_reparse(opened)
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+            or opened.st_size != before.st_size
+            or opened.st_mtime_ns != before.st_mtime_ns
+        ):
+            raise ValueError("snapshot file changed while being opened")
+        if opened.st_size > max_bytes:
+            raise ValueError("snapshot exceeds configured size limit")
+
+        chunks: list[bytes] = []
+        remaining = max_bytes + 1
+        while remaining:
+            chunk = os.read(descriptor, min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        after = os.fstat(descriptor)
+        if len(raw) > max_bytes:
+            raise ValueError("snapshot exceeds configured size limit")
+        if (
+            len(raw) != opened.st_size
+            or after.st_size != opened.st_size
+            or (after.st_dev, after.st_ino) != (opened.st_dev, opened.st_ino)
+            or after.st_mtime_ns != opened.st_mtime_ns
+        ):
+            raise ValueError("snapshot file changed while being read")
+        return raw
+    finally:
+        os.close(descriptor)
+
+
+def _reconcile_validation_report(
+    source: dict[str, Any],
+    raw: bytes,
+    validation: dict[str, Any],
+    *,
+    validated_at: str | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Require a complete PASS receipt that matches the exact snapshot bytes."""
+    if not isinstance(validation, dict):
+        raise ValueError("validated snapshot receipt must be an object")
+    dataset_id = str(source["id"])
+    if str(validation.get("id")) != dataset_id:
+        raise ValueError("validated snapshot dataset id does not match the source")
+    if validation.get("dataset_id") != dataset_id:
+        raise ValueError("validated snapshot dataset id does not match the source")
+    if validation.get("snapshot_origin") != "source_snapshot":
+        raise ValueError("only an approved source snapshot can be imported")
+    if validation.get("validation_rules") != list(source["validation_rules"]):
+        raise ValueError("validated snapshot rules do not match the source manifest")
+
+    sha256 = hashlib.sha256(raw).hexdigest()
+    if validation.get("sha256") != sha256:
+        raise ValueError("validated snapshot digest does not match the imported bytes")
+    size_bytes = validation.get("size_bytes")
+    if (
+        not isinstance(size_bytes, int)
+        or isinstance(size_bytes, bool)
+        or size_bytes != len(raw)
+    ):
+        raise ValueError("validated snapshot size does not match the imported bytes")
+
+    receipt_time = validation.get("validated_at")
+    receipt_timestamp = _parse_timestamp(receipt_time)
+    if receipt_timestamp is None:
+        raise ValueError("validated snapshot receipt has no valid timestamp")
+    if validated_at is not None:
+        requested_timestamp = _parse_timestamp(validated_at)
+        if requested_timestamp is None or requested_timestamp != receipt_timestamp:
+            raise ValueError("validated_at does not match the validation receipt")
+    now = validated_at or receipt_time
+
+    fresh = validate_payload(raw, source)
+    if fresh.get("status") != "PASS":
+        raise ValueError("only a freshly validated PASS snapshot can be imported")
+    for key, expected in fresh.items():
+        if key not in validation or validation.get(key) != expected:
+            raise ValueError(
+                f"validated snapshot receipt does not match fresh validation: {key}"
+            )
+    return fresh, now
+
+
+def preflight_validated_snapshot(
+    source: dict[str, Any],
+    raw: bytes,
+    validation: dict[str, Any],
+    *,
+    validated_at: str | None = None,
+) -> dict[str, Any]:
+    """Validate all import inputs without opening or mutating a database."""
+    _validate_source(source)
+    fresh, receipt_time = _reconcile_validation_report(
+        source, raw, validation, validated_at=validated_at
+    )
+    records = _payload_records(raw, source)
+    if len(records) != fresh["row_count"]:
+        raise ValueError("parsed record count differs from validation result")
+    sha256 = hashlib.sha256(raw).hexdigest()
+    dataset_id = str(source["id"])
+    return {
+        "dataset_id": dataset_id,
+        "version_id": f"{dataset_id}:{sha256}",
+        "sha256": sha256,
+        "validated_at": receipt_time,
+        "records": records,
+        "fresh_validation": fresh,
+        "metadata": _source_metadata(source),
+    }
 
 
 def connect(db_path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
-    path = Path(db_path).resolve()
-    if path == MOCK_DB_PATH.resolve():
-        raise ValueError("official reference database must not use the P0 mock database path")
+    requested = Path(db_path)
+    _assert_distinct_file_identity(requested)
+    path = requested.resolve(strict=False)
+    _assert_distinct_file_identity(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path, timeout=30, factory=_ClosingConnection)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 30000")
-    return connection
+    try:
+        connection.row_factory = sqlite3.Row
+        opened_path = connection.execute("PRAGMA database_list").fetchone()[2]
+        if not opened_path or Path(opened_path).resolve(strict=False) != path:
+            raise ValueError("SQLite opened an unexpected official database path")
+        _assert_distinct_file_identity(path)
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 30000")
+        return connection
+    except Exception:
+        connection.close()
+        raise
 
 
 def initialize_database(
@@ -480,6 +910,7 @@ def initialize_database(
                 version_id TEXT PRIMARY KEY,
                 dataset_id TEXT NOT NULL REFERENCES official_dataset_registry(dataset_id),
                 sha256 TEXT NOT NULL,
+                content_digest TEXT,
                 source_url TEXT,
                 metadata_modified TEXT,
                 update_frequency TEXT,
@@ -574,19 +1005,10 @@ def initialize_database(
 
             view = _quote("active_" + table)
             connection.execute(f"DROP VIEW IF EXISTS {view}")
-            columns = ["record_id", "source_version_id", "source_row_number", *source["fields"]]
-            selected = ", ".join(f"d.{_quote(column)}" for column in columns)
-            connection.execute(
-                f"""CREATE VIEW {view} AS
-                    SELECT {selected}
-                    FROM {quoted_table} AS d
-                    JOIN official_dataset_registry AS r
-                     ON r.dataset_id = '{dataset_id.replace("'", "''")}'
-                     AND r.active_version_id = d.source_version_id"""
-            )
+            connection.execute(_active_view_sql(source))
 
         _migrate_existing_metadata(connection, source_list)
-        connection.execute("PRAGMA user_version = 2")
+        connection.execute("PRAGMA user_version = 3")
     return Path(db_path).resolve()
 
 
@@ -735,24 +1157,81 @@ def import_validated_snapshot(
     validated_at: str | None = None,
 ) -> dict[str, Any]:
     """Import one PASS snapshot atomically and activate its immutable version."""
-    _validate_source(source)
-    fresh_validation = validate_payload(raw, source)
-    if validation.get("status") != "PASS" or fresh_validation["status"] != "PASS":
-        raise ValueError("only a freshly validated PASS snapshot can be imported")
-
-    dataset_id = str(source["id"])
+    prepared = preflight_validated_snapshot(
+        source, raw, validation, validated_at=validated_at
+    )
+    dataset_id = prepared["dataset_id"]
     table = _quote(source["table"])
-    sha256 = hashlib.sha256(raw).hexdigest()
-    version_id = f"{dataset_id}:{sha256}"
-    records = _payload_records(raw, source)
-    if len(records) != fresh_validation["row_count"]:
-        raise ValueError("parsed record count differs from validation result")
-    now = validated_at or utc_now()
-    if _parse_timestamp(now) is None:
-        raise ValueError("validated_at must be an ISO-8601 timestamp")
-    metadata = _source_metadata(source)
+    sha256 = prepared["sha256"]
+    version_id = prepared["version_id"]
+    records = prepared["records"]
+    now = prepared["validated_at"]
+    metadata = prepared["metadata"]
 
     with connect(db_path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        existing = connection.execute(
+            """SELECT version_id, dataset_id, sha256, source_url,
+                      metadata_modified, update_frequency, fetched_at,
+                      validated_at, record_count, validation_status,
+                      content_digest, authority, official_dataset_url, format,
+                      content_type, license_code, license_name, license_url,
+                      declared_update_frequency, effective_from, effective_to,
+                      validation_rules
+               FROM official_dataset_versions
+               WHERE dataset_id = ? AND sha256 = ?""",
+            (dataset_id, sha256),
+        ).fetchone()
+        if existing:
+            if existing["version_id"] != version_id:
+                raise ValueError("stored version id is inconsistent with its digest")
+            registry = connection.execute(
+                """SELECT dataset_id, source_table, active_version_id,
+                          active_sha256, metadata_modified
+                   FROM official_dataset_registry WHERE dataset_id = ?""",
+                (dataset_id,),
+            ).fetchone()
+            if registry and existing["content_digest"] is None:
+                existing = (
+                    _backfill_legacy_content_digest(
+                        connection,
+                        registry,
+                        source,
+                        existing,
+                        records,
+                        sha256,
+                    )
+                    or existing
+                )
+            active = (
+                _consistent_active_version(connection, registry, source)
+                if registry
+                else None
+            )
+            if (
+                active is None
+                or active["version_id"] != version_id
+                or existing["content_digest"] != active["content_digest"]
+            ):
+                raise ValueError("existing snapshot is not the verified active version")
+            checked_at = utc_now()
+            cursor = connection.execute(
+                """UPDATE official_dataset_registry
+                   SET last_check_at = ?, last_status = 'PASS', last_error = NULL
+                   WHERE dataset_id = ?""",
+                (checked_at, dataset_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(f"official database schema is missing dataset {dataset_id}")
+            return {
+                "dataset_id": dataset_id,
+                "version_id": version_id,
+                "sha256": sha256,
+                "row_count": len(records),
+                "new_version": False,
+                "activated": False,
+                "reason": "same_snapshot_immutable_noop",
+            }
         registry = connection.execute(
             """SELECT last_status, last_check_at
                FROM official_dataset_registry WHERE dataset_id = ?""",
@@ -772,80 +1251,58 @@ def import_validated_snapshot(
                 "activated": False,
                 "reason": "newer_validation_result_preserved",
             }
-        existing = connection.execute(
-            "SELECT version_id FROM official_dataset_versions WHERE dataset_id = ? AND sha256 = ?",
-            (dataset_id, sha256),
-        ).fetchone()
-        if not existing:
-            connection.execute(
-                """INSERT INTO official_dataset_versions
-                   (version_id, dataset_id, sha256, source_url, metadata_modified,
-                    update_frequency, fetched_at, validated_at, record_count,
-                    validation_status, authority, official_dataset_url, format,
-                    content_type, license_code, license_name, license_url,
-                    declared_update_frequency, effective_from, effective_to,
-                    validation_rules)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PASS', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    version_id, dataset_id, sha256, source_url, metadata_modified,
-                    update_frequency, now, now, len(records),
-                    metadata["authority"],
-                    metadata["official_dataset_url"],
-                    metadata["format"],
-                    metadata["content_type"],
-                    metadata["license_code"],
-                    metadata["license_name"],
-                    metadata["license_url"],
-                    metadata["declared_update_frequency"],
-                    metadata["effective_from"],
-                    metadata["effective_to"],
-                    metadata["validation_rules"],
-                ),
-            )
-            fields = source["fields"]
-            columns = ["source_version_id", "source_row_number", *fields]
-            insert_sql = (
-                f"INSERT INTO {table} ({', '.join(_quote(column) for column in columns)}) "
-                f"VALUES ({', '.join('?' for _ in columns)})"
-            )
-            values = [
-                (version_id, index, *(_as_text(row.get(field)) for field in fields))
-                for index, row in enumerate(records, start=1)
-            ]
-            connection.executemany(insert_sql, values)
-            imported = True
-        else:
-            version_id = existing["version_id"]
-            connection.execute(
-                """UPDATE official_dataset_versions
-                   SET source_url = ?, metadata_modified = ?, update_frequency = ?,
-                       validated_at = ?, validation_status = 'PASS',
-                       authority = ?, official_dataset_url = ?, format = ?,
-                       content_type = ?, license_code = ?, license_name = ?,
-                       license_url = ?, declared_update_frequency = ?,
-                       effective_from = ?, effective_to = ?, validation_rules = ?
-                   WHERE version_id = ?""",
-                (
-                    source_url,
-                    metadata_modified,
-                    update_frequency,
-                    now,
-                    metadata["authority"],
-                    metadata["official_dataset_url"],
-                    metadata["format"],
-                    metadata["content_type"],
-                    metadata["license_code"],
-                    metadata["license_name"],
-                    metadata["license_url"],
-                    metadata["declared_update_frequency"],
-                    metadata["effective_from"],
-                    metadata["effective_to"],
-                    metadata["validation_rules"],
-                    version_id,
-                ),
-            )
-            imported = False
+        fields = source["fields"]
+        row_values = [
+            [version_id, index, *(_as_text(row.get(field)) for field in fields)]
+            for index, row in enumerate(records, start=1)
+        ]
+        version_record = {
+            "version_id": version_id,
+            "dataset_id": dataset_id,
+            "sha256": sha256,
+            "source_url": source_url,
+            "metadata_modified": metadata_modified,
+            "update_frequency": update_frequency,
+            "fetched_at": now,
+            "validated_at": now,
+            "record_count": len(records),
+            "validation_status": "PASS",
+            **metadata,
+            "content_digest": None,
+        }
+        digest = _content_digest(source, version_record, row_values)
         connection.execute(
+            """INSERT INTO official_dataset_versions
+               (version_id, dataset_id, sha256, content_digest, source_url, metadata_modified,
+                update_frequency, fetched_at, validated_at, record_count,
+                validation_status, authority, official_dataset_url, format,
+                content_type, license_code, license_name, license_url,
+                declared_update_frequency, effective_from, effective_to,
+                validation_rules)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PASS', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                version_id, dataset_id, sha256, digest, source_url, metadata_modified,
+                update_frequency, now, now, len(records),
+                metadata["authority"],
+                metadata["official_dataset_url"],
+                metadata["format"],
+                metadata["content_type"],
+                metadata["license_code"],
+                metadata["license_name"],
+                metadata["license_url"],
+                metadata["declared_update_frequency"],
+                metadata["effective_from"],
+                metadata["effective_to"],
+                metadata["validation_rules"],
+            ),
+        )
+        columns = ["source_version_id", "source_row_number", *fields]
+        insert_sql = (
+            f"INSERT INTO {table} ({', '.join(_quote(column) for column in columns)}) "
+            f"VALUES ({', '.join('?' for _ in columns)})"
+        )
+        connection.executemany(insert_sql, row_values)
+        cursor = connection.execute(
             """UPDATE official_dataset_registry
                SET active_version_id = ?, active_sha256 = ?,
                    metadata_modified = ?, last_check_at = ?,
@@ -853,22 +1310,87 @@ def import_validated_snapshot(
                WHERE dataset_id = ?""",
             (version_id, sha256, metadata_modified, now, dataset_id),
         )
+        if cursor.rowcount != 1:
+            raise ValueError(f"official database schema is missing dataset {dataset_id}")
+        activated = connection.execute(
+            """SELECT dataset_id, source_table, active_version_id,
+                      active_sha256, metadata_modified
+               FROM official_dataset_registry WHERE dataset_id = ?""",
+            (dataset_id,),
+        ).fetchone()
+        verified = (
+            _consistent_active_version(connection, activated, source)
+            if activated
+            else None
+        )
+        if verified is None or verified["version_id"] != version_id:
+            raise ValueError("imported version failed active-content verification")
     return {"dataset_id": dataset_id, "version_id": version_id, "sha256": sha256,
-            "row_count": len(records), "new_version": imported, "activated": True}
+            "row_count": len(records), "new_version": True, "activated": True}
 
 
 def rollback_dataset(
     db_path: Path | str, dataset_id: str, version_id: str
 ) -> None:
+    sources = {str(source["id"]): source for source in load_sources()}
     with connect(db_path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        registry = connection.execute(
+            """SELECT dataset_id, source_table, active_version_id, active_sha256
+               FROM official_dataset_registry WHERE dataset_id = ?""",
+            (str(dataset_id),),
+        ).fetchone()
+        if not registry:
+            raise ValueError(f"unknown official dataset id {dataset_id}")
+        source = sources.get(str(dataset_id))
+        if source is None or registry["source_table"] != str(source["table"]):
+            raise ValueError("registry source table does not match the official manifest")
+        selected = ", ".join(
+            _quote(column) for column in _version_digest_columns()
+        )
         version = connection.execute(
-            """SELECT sha256 FROM official_dataset_versions
-               WHERE dataset_id = ? AND version_id = ?
-                 AND validation_status = 'PASS'""",
+            f"""SELECT {selected}, content_digest
+                FROM official_dataset_versions
+                WHERE dataset_id = ? AND version_id = ?
+                  AND validation_status = 'PASS'""",
             (str(dataset_id), version_id),
         ).fetchone()
         if not version:
             raise ValueError("version is not a PASS version of the requested dataset")
+        if (
+            version["dataset_id"] != str(dataset_id)
+            or version["version_id"] != f"{dataset_id}:{version['sha256']}"
+            or not isinstance(version["record_count"], int)
+            or isinstance(version["record_count"], bool)
+            or version["record_count"] <= 0
+        ):
+            raise ValueError("PASS version metadata is inconsistent")
+        target_rows = connection.execute(
+            f"""SELECT source_version_id, source_row_number,
+                       {", ".join(_quote(field) for field in source["fields"])}
+                FROM {_quote(source['table'])}
+                WHERE source_version_id = ?
+                ORDER BY source_row_number""",
+            (version_id,),
+        ).fetchall()
+        target_values = [list(row) for row in target_rows]
+        if (
+            len(target_values) != version["record_count"]
+            or any(
+                row[1] != index
+                for index, row in enumerate(target_values, start=1)
+            )
+            or version["content_digest"] != _content_digest(source, version, target_values)
+        ):
+            raise ValueError("target version contents are inconsistent")
+        current = _consistent_active_version(
+            connection,
+            registry,
+            source,
+            require_active_sha=True,
+        )
+        if current is None:
+            raise ValueError("current active version or view is inconsistent")
         cursor = connection.execute(
             """UPDATE official_dataset_registry
                SET active_version_id = ?, active_sha256 = ?, last_check_at = ?,
@@ -878,3 +1400,16 @@ def rollback_dataset(
         )
         if cursor.rowcount != 1:
             raise ValueError(f"unknown official dataset id {dataset_id}")
+        activated = connection.execute(
+            """SELECT dataset_id, source_table, active_version_id,
+                      active_sha256, metadata_modified
+               FROM official_dataset_registry WHERE dataset_id = ?""",
+            (str(dataset_id),),
+        ).fetchone()
+        verified = (
+            _consistent_active_version(connection, activated, source)
+            if activated
+            else None
+        )
+        if verified is None or verified["version_id"] != version_id:
+            raise ValueError("rollback target failed active-content verification")

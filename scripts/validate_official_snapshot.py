@@ -24,6 +24,9 @@ from xml.etree import ElementTree
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 MANIFEST = ROOT / "config" / "official_sources.json"
 OFFICIAL_DATA_DIR = ROOT / "data" / "official_data"
 DEFAULT_SOURCE_DIR = OFFICIAL_DATA_DIR / "source_snapshots"
@@ -167,7 +170,11 @@ def _parse_csv(
         reader = csv.reader(io.StringIO(text, newline=""), delimiter=delimiter)
         header = next(reader, [])
         choices.append((_expected_match_count(header, expected), len(header), delimiter))
-    _, _, delimiter = max(choices)
+    best_rank = max(choice[:2] for choice in choices)
+    best = [choice for choice in choices if choice[:2] == best_rank]
+    if len(best) != 1:
+        raise ValueError("CSV delimiter is ambiguous")
+    _, _, delimiter = best[0]
     reader = csv.reader(io.StringIO(text, newline=""), delimiter=delimiter)
     header = next(reader, [])
     rows = (
@@ -332,6 +339,9 @@ def _summarize_rows(
     duplicate_keys = 0
     duplicate_rows = 0
     blank_key_rows = 0
+    blank_ccc_values = 0
+    blank_required_values = 0
+    all_blank_fields = 0
     invalid_ccc_values = 0
     law_identity_invalid_rows = 0
     law_identity_issue_counts: dict[str, int] = {}
@@ -340,10 +350,22 @@ def _summarize_rows(
         and "law_identity_requires_url_and_dates"
         in source.get("validation_rules", [])
     )
+    required_columns = [
+        field_by_norm[_norm(field)]
+        for field in expected
+        if _norm(field) in field_by_norm
+    ]
+    allowed_blank_columns = (
+        {field_by_norm[_norm("生效日期")]}
+        if check_law_identity and _norm("生效日期") in field_by_norm
+        else set()
+    )
     count = 0
     for row in rows:
         count += 1
         record = tuple(str(row.get(column, "") or "").strip() for column in header)
+        if not any(record):
+            all_blank_fields += 1
         if record in seen_records:
             duplicate_rows += 1
         else:
@@ -356,10 +378,18 @@ def _summarize_rows(
                 duplicate_keys += 1
             else:
                 seen.add(key)
+        blank_required_values += sum(
+            not str(row.get(column, "") or "").strip()
+            for column in required_columns
+            if column not in allowed_blank_columns
+        )
         for column in ccc_columns:
             value = str(row.get(column, "") or "").strip()
+            if not value:
+                blank_ccc_values += 1
+                continue
             normalized = re.sub(r"[.\-\s]", "", value)
-            if value and not re.fullmatch(r"\d{8,12}[A-Z]?", normalized.upper()):
+            if not re.fullmatch(r"\d{8,12}[A-Z]?", normalized.upper()):
                 invalid_ccc_values += 1
         if check_law_identity:
             identity_issues = _law_identity_issues(row, field_by_norm)
@@ -375,6 +405,9 @@ def _summarize_rows(
         "duplicate_keys": duplicate_keys,
         "duplicate_rows": duplicate_rows,
         "blank_key_rows": blank_key_rows,
+        "blank_ccc_values": blank_ccc_values,
+        "blank_required_values": blank_required_values,
+        "all_blank_fields": all_blank_fields,
         "invalid_ccc_values": invalid_ccc_values,
         "law_identity_invalid_rows": law_identity_invalid_rows,
         "law_identity_issue_counts": law_identity_issue_counts,
@@ -414,9 +447,13 @@ def _parse_zip(
             overlap = _expected_match_count(parsed["header"], expected)
             candidates.append((overlap, parsed["row_count"], info, parsed))
         if candidates:
-            overlap, _, selected, parsed = max(
-                candidates, key=lambda item: (item[0], item[1], item[2].file_size)
-            )
+            best_rank = max((item[0], item[1]) for item in candidates)
+            best = [
+                item for item in candidates if (item[0], item[1]) == best_rank
+            ]
+            if len(best) != 1:
+                raise ValueError("ZIP contains ambiguous data members")
+            overlap, _, selected, parsed = best[0]
             parsed["archive_members"] = len(infos)
             parsed["parsed_members"] = 1
             parsed["selected_member"] = selected.filename
@@ -456,6 +493,12 @@ def validate_payload(raw: bytes, source: dict[str, Any]) -> dict[str, Any]:
         quality_flags.append("duplicate_rows")
     if parsed["blank_key_rows"]:
         quality_flags.append("blank_key_rows")
+    if parsed["blank_ccc_values"]:
+        quality_flags.append("blank_ccc_values")
+    if parsed["blank_required_values"]:
+        quality_flags.append("blank_required_values")
+    if parsed["all_blank_fields"]:
+        quality_flags.append("all_blank_fields")
     if parsed["invalid_ccc_values"]:
         quality_flags.append("invalid_ccc_values")
     if parsed["law_identity_invalid_rows"]:
@@ -467,7 +510,14 @@ def validate_payload(raw: bytes, source: dict[str, Any]) -> dict[str, Any]:
         "duplicate_headers": duplicate_headers,
         "quality_flags": quality_flags,
     })
-    if missing or duplicate_headers or parsed["row_count"] == 0:
+    if (
+        missing
+        or duplicate_headers
+        or parsed["row_count"] == 0
+        or parsed["blank_key_rows"]
+        or parsed["blank_ccc_values"]
+        or parsed["all_blank_fields"]
+    ):
         parsed["status"] = "FAIL"
     elif quality_flags:
         parsed["status"] = "REVIEW"
@@ -499,25 +549,102 @@ def _format_frequency(value: Any) -> str:
 
 def _atomic_write(path: Path, raw: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".part")
-    temporary.write_bytes(raw)
-    temporary.replace(path)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".part",
+        dir=path.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def _select_local_snapshot(
-    dataset_id: str,
+    source: dict[str, Any],
     source_dir: Path,
     candidate_dir: Path,
 ) -> tuple[Path, str] | None:
-    """Prefer an approved source snapshot, then fall back to a candidate."""
+    """Select one unambiguous snapshot, preferring the approved source."""
+    dataset_id = str(source["id"])
     for directory, origin in (
         (source_dir, "source_snapshot"),
         (candidate_dir, "candidate_snapshot"),
     ):
-        matches = sorted(directory.glob(dataset_id + ".*"))
-        if matches:
-            return matches[0], origin
+        matches = sorted(
+            path
+            for path in directory.glob(dataset_id + ".*")
+            if path.is_file()
+        )
+        candidates = []
+        for path in matches:
+            try:
+                raw = _read_snapshot_bytes(path, directory)
+                parsed = validate_payload(raw, source)
+            except (
+                OSError,
+                UnicodeDecodeError,
+                ValueError,
+                json.JSONDecodeError,
+                ElementTree.ParseError,
+                csv.Error,
+            ):
+                continue
+            expected = list(dict.fromkeys(
+                source["fields"]
+                + source.get("keys", [])
+                + source.get("ccc_fields", [])
+            ))
+            overlap = _expected_match_count(parsed["header"], expected)
+            candidates.append((overlap, parsed["row_count"], path))
+        if candidates:
+            best_rank = max(candidate[:2] for candidate in candidates)
+            best = [
+                candidate
+                for candidate in candidates
+                if candidate[:2] == best_rank
+            ]
+            if len(best) != 1:
+                raise ValueError(
+                    f"ambiguous local snapshots for dataset {dataset_id}"
+                )
+            return best[0][2], origin
     return None
+
+
+def _read_snapshot_bytes(path: Path, root: Path) -> bytes:
+    """Use the official DB's bounded, no-follow reader without an import cycle."""
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from tools.official_database import _read_snapshot_file
+
+    return _read_snapshot_file(path, root=root)
+
+
+def _validation_receipt(
+    source: dict[str, Any],
+    raw: bytes,
+    snapshot_origin: str,
+    *,
+    fetched_at: str,
+    validated_at: str,
+) -> dict[str, Any]:
+    """Bind a validation result to the exact bytes and manifest rules used."""
+    return {
+        "dataset_id": str(source["id"]),
+        "snapshot_origin": snapshot_origin,
+        "validation_rules": list(source.get("validation_rules", [])),
+        "fetched_at": fetched_at,
+        "validated_at": validated_at,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "size_bytes": len(raw),
+    }
 
 
 def run(
@@ -525,7 +652,10 @@ def run(
     source_dir: Path,
     report_dir: Path,
     candidate_dir: Path | None = None,
+    *,
+    evidence: dict[str, bytes] | None = None,
 ) -> dict[str, Any]:
+    evidence = evidence if evidence is not None else {}
     sources = _load_sources()
     results = []
     for source in sources:
@@ -534,6 +664,7 @@ def run(
         source_path: Path | None = None
         try:
             if download:
+                fetched_at = datetime.now(timezone.utc).isoformat()
                 metadata = _metadata(dataset_id)
                 distribution = _choose_distribution(metadata, source["format"])
                 source_url = source.get("download_url", distribution["resourceDownloadUrl"])
@@ -551,7 +682,7 @@ def run(
                 item["snapshot_origin"] = "candidate_snapshot"
             else:
                 selected = _select_local_snapshot(
-                    dataset_id,
+                    source,
                     source_dir,
                     candidate_dir or report_dir / "candidates",
                 )
@@ -560,22 +691,36 @@ def run(
                     results.append(item)
                     continue
                 source_path, item["snapshot_origin"] = selected
-                raw = source_path.read_bytes()
+                snapshot_root = (
+                    source_dir
+                    if item["snapshot_origin"] == "source_snapshot"
+                    else candidate_dir or report_dir / "candidates"
+                )
+                raw = _read_snapshot_bytes(source_path, snapshot_root)
+                fetched_at = datetime.fromtimestamp(
+                    source_path.stat().st_mtime,
+                    tz=timezone.utc,
+                ).isoformat()
+            evidence[dataset_id] = raw
             validation = validate_payload(raw, source)
             item.update(validation)
-            item.update({
-                "size_bytes": len(raw),
-                "sha256": hashlib.sha256(raw).hexdigest(),
-            })
-            if download and validation["status"] == "PASS":
-                _atomic_write(source_path, raw)
-                item["file"] = str(source_path)
-                item["snapshot_origin"] = "source_snapshot"
-                item["snapshot_promoted"] = True
-            elif download:
+            validated_at = datetime.now(timezone.utc).isoformat()
+            item.update(_validation_receipt(
+                source,
+                raw,
+                item["snapshot_origin"],
+                fetched_at=fetched_at,
+                validated_at=validated_at,
+            ))
+            if download:
+                item["file"] = item["candidate_file"]
                 item["snapshot_origin"] = "candidate_snapshot"
                 item["snapshot_promoted"] = False
-                item["last_good_snapshot_preserved"] = source_path.exists()
+                item["last_good_snapshot_preserved"] = (
+                    source_dir / source_path.name
+                ).exists()
+                if validation["status"] == "PASS":
+                    item["status"] = "CANDIDATE_PASS"
             else:
                 item["file"] = str(source_path)
                 if item["snapshot_origin"] == "candidate_snapshot":
@@ -594,6 +739,9 @@ def run(
         "summary": {
             "total": len(results),
             "pass": sum(item.get("status") == "PASS" for item in results),
+            "candidate_pass": sum(
+                item.get("status") == "CANDIDATE_PASS" for item in results
+            ),
             "review": sum(item.get("status") == "REVIEW" for item in results),
             "fail": sum(item.get("status") == "FAIL" for item in results),
             "missing": sum(item.get("status") == "MISSING" for item in results),
@@ -614,12 +762,12 @@ def _write_markdown(report: dict[str, Any], path: Path) -> None:
         f"Generated: {report['generated_at']}",
         f"Mode: {report['mode']}",
         "",
-        "| ID | Dataset | Snapshot origin | Status | Rows | Missing fields | Quality flags | Duplicate keys | Exact duplicate rows | Key uniqueness | Blank keys | Invalid CCC | Metadata modified | Update frequency | SHA-256 |",
-        "|---|---|---|---:|---:|---|---|---:|---:|---|---:|---:|---|---|---|",
+        "| ID | Dataset | Snapshot origin | Status | Rows | Missing fields | Quality flags | Duplicate keys | Exact duplicate rows | Key uniqueness | Blank keys | Blank CCC | Blank required values | All blank rows | Invalid CCC | Fetched at | Validated at | Metadata modified | Update frequency | SHA-256 |",
+        "|---|---|---|---:|---:|---|---|---:|---:|---|---:|---:|---:|---:|---:|---|---|---|---|---|",
     ]
     for item in report["results"]:
         lines.append(
-            "| {id} | {name} | {origin} | {status} | {rows} | {missing} | {quality} | {duplicates} | {duplicate_rows} | {key_uniqueness} | {blank} | {invalid_ccc} | {modified} | {frequency} | {sha} |".format(
+            "| {id} | {name} | {origin} | {status} | {rows} | {missing} | {quality} | {duplicates} | {duplicate_rows} | {key_uniqueness} | {blank} | {blank_ccc} | {blank_required} | {all_blank} | {invalid_ccc} | {fetched} | {validated} | {modified} | {frequency} | {sha} |".format(
                 id=item.get("id", ""), name=item.get("name", "").replace("|", "\\|"),
                 origin=item.get("snapshot_origin", "-"),
                 status=item.get("status", "FAIL"), rows=item.get("row_count", ""),
@@ -629,7 +777,12 @@ def _write_markdown(report: dict[str, Any], path: Path) -> None:
                 duplicate_rows=item.get("duplicate_rows", ""),
                 key_uniqueness="unique" if item.get("keys_unique", True) else "non-unique allowed",
                 blank=item.get("blank_key_rows", ""),
+                blank_ccc=item.get("blank_ccc_values", ""),
+                blank_required=item.get("blank_required_values", ""),
+                all_blank=item.get("all_blank_fields", ""),
                 invalid_ccc=item.get("invalid_ccc_values", ""),
+                fetched=item.get("fetched_at", "-"),
+                validated=item.get("validated_at", "-"),
                 modified=item.get("metadata_modified", "-"),
                 frequency=item.get("update_frequency", "-"), sha=item.get("sha256", "-"),
             )
@@ -637,7 +790,10 @@ def _write_markdown(report: dict[str, Any], path: Path) -> None:
     summary = report["summary"]
     lines.extend([
         "",
-        "Summary: " + ", ".join(f"{key}={summary[key]}" for key in ("total", "pass", "review", "fail", "missing")),
+        "Summary: " + ", ".join(
+            f"{key}={summary[key]}"
+            for key in ("total", "pass", "candidate_pass", "review", "fail", "missing")
+        ),
         "",
     ])
     for item in report["results"]:

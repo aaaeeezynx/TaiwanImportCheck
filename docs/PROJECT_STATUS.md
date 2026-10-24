@@ -1,6 +1,6 @@
 # TaiwanImportCheck 專案現況與資料缺口
 
-最後更新：2026-10-23（Asia/Taipei）
+最後更新：2026-10-24（Asia/Taipei）
 
 本文件是目前的專案狀態快照。產品需求仍以 `README.md`、`01` 至 `08` 編號
 規格與 `AGENTS.md` 為準；本文只記錄已完成、未完成、已知限制與下一步。
@@ -8,8 +8,10 @@
 ## 1. 目前結論
 
 - P0 的程式碼、權限控制、Mock SQLite 查詢與 Hermes plugin 整合已有自動測試；
-  2026-10-23 在 `tic-p0-hermes` 容器內實跑 65 項測試全部通過，包含實際
-  `PluginManager` 載入與工具分派整合測試。
+  2026-10-24 在 `tic-p0-hermes` 容器內實跑結果為 `88 tests`、
+  `OK (skipped=1)`，包含實際 `PluginManager` 載入與工具分派整合測試；唯一
+  略過項目是 Windows symlink 權限相關測試。本機同批測試結果為 `88 tests`、
+  `OK (skipped=3)`。
 - 官方參考資料庫已建立 18 個來源的 schema 與版本管理，但這不等於資料已可
   正式使用。最新本機核驗結果是 14 PASS、3 REVIEW、0 FAIL、1 MISSING，
   0 import errors。
@@ -102,8 +104,9 @@ P0 不包含案件管理、網站、多 Agent、正式申報、正式法規判�
 | 6713 | `tariff_advance_rulings` | PASS | 有 |
 | 18289 | `taiwan_laws` | PASS | 有 |
 
-表中沒有 active version 的來源，代表目前沒有可啟用快照，不等於
-2026-10-23 另行直接核驗 `candidate_snapshots/` 的現有候選檔，結果如下：
+表中沒有 active version 的來源，代表目前沒有可啟用快照，不代表候選目錄
+沒有檔案；2026-10-23 另行直接核驗 `candidate_snapshots/` 的現有候選檔，
+結果如下：
 
 | Dataset | 候選檔 | 候選核驗 | 筆數 | 重複情況 |
 |---|---|---:|---:|---|
@@ -280,8 +283,9 @@ Telegram 測試內容，請見 [`../P0_驗證說明.md`](../P0_驗證說明.md)�
 容器內的整合測試與唯讀原始碼編譯檢查：
 
 ```powershell
-docker exec -e PYTHONPATH=/opt/hermes -e HERMES_INSTALL_ROOT=/opt/hermes -e P0_TEST_TEMP_ROOT=/tmp/tic-p0-tests -e HERMES_HOME=/opt/data tic-p0-hermes /opt/hermes/.venv/bin/python -m unittest discover -s tests -v
-docker exec -e PYTHONPATH=/opt/hermes -e PYTHONPYCACHEPREFIX=/tmp/tic-p0-pycache tic-p0-hermes /opt/hermes/.venv/bin/python -m compileall -q tools scripts tests .hermes
+$stamp = Get-Date -Format 'yyyyMMddHHmmss'
+docker exec -u hermes -e PYTHONPATH=/opt/hermes -e HERMES_INSTALL_ROOT=/opt/hermes -e "P0_TEST_TEMP_ROOT=/tmp/tic-p0-tests-hermes-$stamp" -e HERMES_HOME=/opt/data tic-p0-hermes /opt/hermes/.venv/bin/python -m unittest discover -s tests -v
+docker exec -e PYTHONPATH=/opt/hermes -e "PYTHONPYCACHEPREFIX=/tmp/tic-p0-pycache-$stamp" tic-p0-hermes /opt/hermes/.venv/bin/python -m compileall -q tools scripts tests .hermes
 ```
 
 ## 9. 目前限制與下一步
@@ -305,6 +309,13 @@ docker exec -e PYTHONPATH=/opt/hermes -e PYTHONPYCACHEPREFIX=/tmp/tic-p0-pycache
 - 18 個來源仍有 4 個沒有 active version：`92103`、`5996`、`7078` 的候選快照
   核驗為 `REVIEW`，`8876` 尚無候選快照且核驗為 `MISSING`。
 - 正式資料庫尚未接入 Hermes，這是刻意的隔離，不是漏接。
+- 商品圖片只允許從 `IMAGE_CACHE_DIR` 讀取；Docker 固定使用
+  `/opt/data/image_cache`，未設定時本機預設為 `HERMES_HOME/image_cache`。
+  外部路徑、`..` 與符號連結逃逸會被拒絕。尚未取得真實 Telegram 圖片事件
+  傳入本地快取路徑的證據，因此 live 圖片 E2E 仍待驗證。
+- 容器程式碼目錄 `/workspace/app` 是唯讀掛載；官方快照核驗的
+  `--source-dir`、`--candidate-dir` 與 `--report-dir` 應使用可寫的
+  `/opt/data/official_data/...`，不可將報告寫到 `/workspace/app`。
 - 下一步先處理 `92103`、`5996`、`7078` 的重複資料語意與來源品質，並補抓或
   診斷 `8876`；再補來源目錄、版本差異與人工覆核，完成後才評估讓正式資料庫
   進入查詢鏈。
